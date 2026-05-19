@@ -1,0 +1,23 @@
+{
+  "_description": "Eval set for b-roll search. Built by interviewing the video editor. Replace these with real queries from your colleague before the talk.",
+  "_categories": [
+    "object", "action", "mood", "composition", "text_in_frame",
+    "audio_bearing", "expected_to_fail"
+  ],
+  "queries": [
+    {"id": "q01", "text": "aerial shot of a forest",            "category": "object"},
+    {"id": "q02", "text": "person typing on a laptop",          "category": "object"},
+    {"id": "q03", "text": "close-up of hands shaking",          "category": "action"},
+    {"id": "q04", "text": "someone opening a door",             "category": "action"},
+    {"id": "q05", "text": "warm sunset light through windows",  "category": "mood"},
+    {"id": "q06", "text": "fast-paced city energy",             "category": "mood"},
+    {"id": "q07", "text": "close-up face, soft focus background", "category": "composition"},
+    {"id": "q08", "text": "wide establishing shot of skyline",  "category": "composition"},
+    {"id": "q09", "text": "clip with a stop sign visible",      "category": "text_in_frame"},
+    {"id": "q10", "text": "neon storefront with readable text", "category": "text_in_frame"},
+    {"id": "q11", "text": "clip where someone laughs",          "category": "audio_bearing"},
+    {"id": "q12", "text": "quiet outdoor ambient nature sounds","category": "audio_bearing"},
+    {"id": "q13", "text": "same vibe as moody-rain-clip.mp4",   "category": "expected_to_fail",
+     "notes": "image-to-image / clip-to-clip. v5-omni is weak here per Elastic blog."}
+  ]
+}

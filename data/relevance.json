@@ -1,0 +1,20 @@
+{
+  "_description": "Ground truth for the eval set. Each query maps to chunk_ids the editor judges acceptable. Build this BY SITTING WITH HER for ~1 hour.",
+  "_format": "query_id -> list of acceptable chunk_ids (any of these counts as a hit for recall@k)",
+  "_example_only_replace_before_real_eval": true,
+  "relevance": {
+    "q01": ["aerial-forest-01__scene__000", "drone-treetops__scene__002"],
+    "q02": ["office-coding-01__scene__004", "laptop-overhead__scene__000"],
+    "q03": ["handshake-business__scene__001"],
+    "q04": ["doorway-walk-in__scene__000", "office-entry__scene__002"],
+    "q05": ["window-light-warm__scene__001", "kitchen-sunset__scene__003"],
+    "q06": ["tokyo-crossing__scene__000", "ny-traffic-night__scene__005"],
+    "q07": ["interview-shallow__scene__002"],
+    "q08": ["sf-skyline-wide__scene__000", "chicago-river__scene__001"],
+    "q09": ["intersection-stop__scene__003"],
+    "q10": ["shibuya-neon__scene__001"],
+    "q11": ["candid-laughter__scene__000", "dinner-party__scene__004"],
+    "q12": ["forest-stream__scene__002", "mountain-wind__scene__001"],
+    "q13": []
+  }
+}

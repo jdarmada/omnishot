@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>B-Roll Search</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,700;9..144,900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink:        #0a0a0a;
+    --paper:      #f4f1ea;
+    --paper-2:    #ebe7dd;
+    --accent:     #ff4a1c;
+    --accent-2:   #1858d6;
+    --muted:      #6b6357;
+    --border:     #d4ccbd;
+    --good:       #2d7a3a;
+    --warn:       #c47100;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Fraunces', Georgia, serif;
+    font-variation-settings: "opsz" 14;
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  /* Grain overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' /%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.045 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 100;
+    mix-blend-mode: multiply;
+    opacity: 0.55;
+  }
+
+  /* ----- Header ----- */
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 18px 32px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    background: var(--paper);
+    position: sticky; top: 0; z-index: 50;
+  }
+  .brand {
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 144;
+    font-weight: 900;
+    font-size: 26px;
+    letter-spacing: -0.02em;
+  }
+  .brand .dot { color: var(--accent); }
+  .meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .meta .badge {
+    background: var(--ink);
+    color: var(--paper);
+    padding: 2px 8px;
+    border-radius: 2px;
+    margin-left: 6px;
+  }
+
+  /* ----- Layout ----- */
+  main {
+    max-width: 1500px;
+    margin: 0 auto;
+    padding: 40px 32px 80px;
+  }
+
+  /* Title block */
+  .lede {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 24px;
+    align-items: end;
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 18px;
+    margin-bottom: 28px;
+  }
+  h1 {
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 144;
+    font-weight: 700;
+    font-size: clamp(38px, 5.4vw, 72px);
+    line-height: 0.94;
+    letter-spacing: -0.035em;
+  }
+  h1 em { font-style: italic; color: var(--accent); font-weight: 500; }
+  .sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    text-align: right;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    line-height: 1.7;
+  }
+
+  /* ----- Search box ----- */
+  .search-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .search-input {
+    background: var(--paper-2);
+    border: 1px solid var(--border);
+    border-radius: 0;
+    padding: 22px 20px;
+    font-family: 'Fraunces', serif;
+    font-size: 22px;
+    font-weight: 500;
+    color: var(--ink);
+    width: 100%;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .search-input:focus {
+    outline: none;
+    border-color: var(--ink);
+    background: var(--paper);
+  }
+  .search-input::placeholder {
+    color: var(--muted);
+    font-style: italic;
+  }
+  .search-btn {
+    background: var(--ink);
+    color: var(--paper);
+    border: none;
+    padding: 0 32px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .search-btn:hover { background: var(--accent); }
+  .search-btn:disabled { background: var(--muted); cursor: wait; }
+
+  /* ----- Filter chips ----- */
+  .filters {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .chip {
+    background: transparent;
+    border: 1px solid var(--border);
+    padding: 7px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: all 0.15s;
+    color: var(--muted);
+  }
+  .chip:hover { border-color: var(--ink); color: var(--ink); }
+  .chip.active {
+    background: var(--ink);
+    color: var(--paper);
+    border-color: var(--ink);
+  }
+  .chip.accent.active { background: var(--accent); border-color: var(--accent); }
+
+  /* ----- Status strip ----- */
+  .status {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    display: flex;
+    gap: 24px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .status span strong { color: var(--ink); margin-left: 4px; }
+  .status .ok    strong { color: var(--good); }
+  .status .warn  strong { color: var(--warn); }
+
+  /* ----- Results grid ----- */
+  .results {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 18px;
+  }
+  .clip {
+    position: relative;
+    background: var(--paper-2);
+    border: 1px solid var(--border);
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .clip:hover {
+    transform: translateY(-2px);
+    box-shadow: 6px 6px 0 var(--ink);
+    border-color: var(--ink);
+  }
+  .clip video {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: var(--ink);
+    object-fit: cover;
+    display: block;
+  }
+  .clip-rank {
+    position: absolute;
+    top: 8px; left: 8px;
+    background: var(--ink);
+    color: var(--paper);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    z-index: 2;
+  }
+  .clip-rank.top { background: var(--accent); }
+  .clip-score {
+    position: absolute;
+    top: 8px; right: 8px;
+    background: rgba(10,10,10,0.85);
+    color: var(--paper);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    padding: 3px 8px;
+    z-index: 2;
+  }
+  .clip-meta {
+    padding: 10px 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    border-top: 1px solid var(--border);
+  }
+  .clip-meta .id { color: var(--ink); }
+
+  /* ----- Empty / loading ----- */
+  .empty {
+    text-align: center;
+    padding: 80px 20px;
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    color: var(--muted);
+    font-size: 18px;
+  }
+  .empty .hint {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-top: 16px;
+    font-style: normal;
+  }
+
+  .loading {
+    display: inline-block;
+    width: 10px; height: 10px;
+    background: var(--accent);
+    margin: 0 4px;
+    animation: pulse 1.4s infinite ease-in-out;
+  }
+  .loading:nth-child(2) { animation-delay: 0.2s; }
+  .loading:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes pulse {
+    0%, 80%, 100% { opacity: 0.3; }
+    40% { opacity: 1; }
+  }
+
+  /* ----- Sample queries strip ----- */
+  .samples {
+    margin: 20px 0 28px;
+    padding: 16px 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .samples-label { margin-right: 12px; }
+  .sample-q {
+    background: none;
+    border: none;
+    color: var(--accent-2);
+    cursor: pointer;
+    font: inherit;
+    text-transform: none;
+    letter-spacing: 0;
+    margin-right: 14px;
+    padding: 0;
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+  .sample-q:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">b-roll<span class="dot">.</span>search</div>
+  <div class="meta">
+    Jina v5-omni <span class="badge" id="model-badge">small</span>
+    Elasticsearch <span class="badge" id="index-badge">scene-1024-float</span>
+  </div>
+</header>
+
+<main>
+  <div class="lede">
+    <h1>Stop scrubbing.<br><em>Start searching.</em></h1>
+    <div class="sub">
+      Multimodal video retrieval<br>
+      v5-omni · Matryoshka · BBQ<br>
+      AIEWF / 2026
+    </div>
+  </div>
+
+  <div class="search-row">
+    <input type="text" id="q" class="search-input"
+           placeholder="aerial shot of a forest, warm sunset light, hands typing on a laptop..."
+           autocomplete="off">
+    <button class="search-btn" id="go">Search</button>
+  </div>
+
+  <div class="filters">
+    <button class="chip" data-filter="recent">Uploaded this week</button>
+    <button class="chip" data-filter="short">Under 15s</button>
+    <button class="chip" data-filter="medium">15–60s</button>
+    <button class="chip accent" data-filter="hybrid">Hybrid (vector + BM25)</button>
+  </div>
+
+  <div class="samples">
+    <span class="samples-label">Try:</span>
+    <button class="sample-q">aerial shot of a forest</button>
+    <button class="sample-q">person typing on a laptop</button>
+    <button class="sample-q">warm sunset light through windows</button>
+    <button class="sample-q">fast-paced city energy</button>
+    <button class="sample-q">someone laughing</button>
+  </div>
+
+  <div class="status" id="status">
+    <span>Index<strong id="s-index">—</strong></span>
+    <span>Docs<strong id="s-docs">—</strong></span>
+    <span>Size<strong id="s-size">—</strong></span>
+    <span class="ok">Latency<strong id="s-lat">—</strong></span>
+    <span>Embed<strong id="s-embed">—</strong></span>
+    <span>kNN<strong id="s-search">—</strong></span>
+  </div>
+
+  <div id="results" class="results"></div>
+  <div id="empty" class="empty">
+    <div>The library is searchable, not scrubbable.</div>
+    <div class="hint">Type a description above to find matching b-roll.</div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+const state = {
+  filters: new Set(),
+  hybrid: false,
+};
+
+async function loadStats() {
+  try {
+    const r = await fetch('/api/stats');
+    const s = await r.json();
+    if (s.exists) {
+      $('s-index').textContent = s.index;
+      $('s-docs').textContent = s.doc_count.toLocaleString();
+      $('s-size').textContent = s.size_mb + ' MB';
+      $('index-badge').textContent = s.index.replace('broll-', '');
+    }
+  } catch (e) {/* ignore */}
+}
+
+async function search() {
+  const query = $('q').value.trim();
+  if (!query) return;
+
+  const btn = $('go');
+  btn.disabled = true; btn.textContent = 'Searching';
+
+  const resEl = $('results');
+  resEl.innerHTML = '<div class="empty"><span class="loading"></span><span class="loading"></span><span class="loading"></span></div>';
+  $('empty').style.display = 'none';
+
+  // Build payload from active filters
+  const payload = { query, k: 12, hybrid: state.hybrid };
+  if (state.filters.has('recent')) {
+    const d = new Date(); d.setDate(d.getDate() - 7);
+    payload.uploaded_after = d.toISOString().slice(0, 10);
+  }
+  if (state.filters.has('short')) payload.max_duration = 15;
+  if (state.filters.has('medium')) payload.max_duration = 60;
+
+  try {
+    const t0 = performance.now();
+    const r = await fetch('/api/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error('Search failed');
+    const data = await r.json();
+    const dt = performance.now() - t0;
+
+    $('s-lat').textContent = data.latency_ms.toFixed(0) + ' ms';
+    $('s-embed').textContent = data.embed_ms.toFixed(0) + ' ms';
+    $('s-search').textContent = data.search_ms.toFixed(0) + ' ms';
+
+    renderResults(data.hits);
+  } catch (e) {
+    resEl.innerHTML = `<div class="empty">Search failed: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Search';
+  }
+}
+
+function renderResults(hits) {
+  const resEl = $('results');
+  if (!hits.length) {
+    resEl.innerHTML = '';
+    $('empty').style.display = 'block';
+    $('empty').innerHTML = '<div>No matches for that query.</div><div class="hint">Try different wording, or relax filters.</div>';
+    return;
+  }
+  $('empty').style.display = 'none';
+  resEl.innerHTML = hits.map((h, i) => `
+    <div class="clip" onclick="this.querySelector('video').play()">
+      <div class="clip-rank ${i === 0 ? 'top' : ''}">#${i + 1}</div>
+      <div class="clip-score">${h.score.toFixed(3)}</div>
+      <video src="/api/clip/${h.chunk_id}" muted loop playsinline preload="metadata"
+             onmouseenter="this.play()" onmouseleave="this.pause()"></video>
+      <div class="clip-meta">
+        <span class="id">${h.clip_id}</span>
+        <span>${h.duration.toFixed(1)}s</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+// Wire up events
+$('go').addEventListener('click', search);
+$('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') search(); });
+
+document.querySelectorAll('.chip').forEach(c => {
+  c.addEventListener('click', () => {
+    const f = c.dataset.filter;
+    if (f === 'hybrid') {
+      state.hybrid = !state.hybrid;
+      c.classList.toggle('active', state.hybrid);
+      return;
+    }
+    // 'short' and 'medium' are mutually exclusive
+    if (f === 'short' || f === 'medium') {
+      document.querySelectorAll('[data-filter="short"], [data-filter="medium"]')
+        .forEach(el => { if (el !== c) { el.classList.remove('active'); state.filters.delete(el.dataset.filter); } });
+    }
+    if (state.filters.has(f)) {
+      state.filters.delete(f); c.classList.remove('active');
+    } else {
+      state.filters.add(f); c.classList.add('active');
+    }
+  });
+});
+
+document.querySelectorAll('.sample-q').forEach(b => {
+  b.addEventListener('click', () => { $('q').value = b.textContent; search(); });
+});
+
+loadStats();
+</script>
+</body>
+</html>
