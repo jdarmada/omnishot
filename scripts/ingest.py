@@ -1,7 +1,7 @@
 """
 End-to-end ingestion pipeline:
 
-    clips/ → chunks → Jina embeddings → Elasticsearch
+    clips/ → chunks → Elastic inference (omni) → Elasticsearch
 
 This is the script the talk opens with — "50 lines and you've got multimodal
 video search." (The rest of the talk is everything you discover after that.)
@@ -12,7 +12,6 @@ Usage:
 You can re-run with different (strategy, dims, quant) to build out the
 benchmark matrix; each combination lands in its own index.
 """
-
 from __future__ import annotations
 import argparse
 import datetime as dt
@@ -26,10 +25,12 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent))
 
 from chunk_video import chunk_video, Strategy
-from embed_jina import JinaClient, EmbedConfig, video_input
+from embed_elastic import ElasticInferenceClient, EmbedConfig, video_input
 from index_elastic import (
     es_client, create_index, bulk_index, index_name, ChunkDoc,
 )
+from dotenv import load_dotenv
+load_dotenv()
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 
@@ -54,7 +55,7 @@ def main():
     ap.add_argument("--strategy", choices=["whole", "scene", "fixed30"], default="scene")
     ap.add_argument("--dims", type=int, default=1024)
     ap.add_argument("--quant", choices=["float", "int8", "bbq"], default="float")
-    ap.add_argument("--model", default="jina-embeddings-v5-omni-small")
+    ap.add_argument("--inference-id", default=None, help="ES inference endpoint ID (overrides ES_INFERENCE_ID)")
     ap.add_argument("--batch-size", type=int, default=8)
     args = ap.parse_args()
 
@@ -71,15 +72,15 @@ def main():
         all_chunks.extend(chunk_video(clip, args.chunks_dir, args.strategy))
     print(f"Produced {len(all_chunks)} chunks")
 
-    # 2. Embed (in batches — the Jina API accepts up to 8 video inputs/req)
-    jina = JinaClient()
-    cfg = EmbedConfig(model=args.model, dimensions=args.dims, embedding_type="float")
+    # 2. Embed (in batches)
+    client = ElasticInferenceClient(inference_id=args.inference_id)
+    cfg = EmbedConfig(dimensions=args.dims)
     docs: list[ChunkDoc] = []
 
     for i in tqdm(range(0, len(all_chunks), args.batch_size), desc="Embedding"):
         batch = all_chunks[i:i + args.batch_size]
         inputs = [video_input(c.path) for c in batch]
-        vectors = jina.embed(inputs, task="retrieval.passage", config=cfg)
+        vectors = client.embed(inputs, task="retrieval.passage", config=cfg)
 
         for chunk, vec in zip(batch, vectors):
             meta = metadata.get(chunk.clip_id, {})
