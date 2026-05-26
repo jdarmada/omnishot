@@ -1,14 +1,18 @@
 """
 Elasticsearch index management for the b-roll corpus.
 
-We use dense_vector with cosine similarity and Better Binary Quantization
-(BBQ) as the index type for the compressed configurations. Metadata fields
-power the hybrid-search story ("outdoor shot, under 15s, uploaded this week").
+We use semantic_text with the Jina v5-omni inference endpoint so that
+Elasticsearch handles embedding at both index and query time. This means:
 
-Index naming convention: `broll-{strategy}-{dims}-{quantization}`
-  e.g.  broll-scene-1024-float, broll-scene-256-bbq
+  - At ingest: pass each keyframe as a data URI in the `content` field.
+    ES calls the inference endpoint with the correct typed image format
+    automatically — no manual embedding calls needed.
 
-Each config gets its own index so we can apples-to-apples benchmark them.
+  - At search: pass the text query to a `semantic` query.
+    ES embeds it and runs the similarity search automatically.
+
+Index naming convention: `broll-{strategy}-semantic`
+  e.g.  broll-scene-semantic
 """
 
 from __future__ import annotations
@@ -34,36 +38,25 @@ class ChunkDoc:
     uploader: str
     tags: list[str]
     transcript: str | None  # if you've run STT — feeds BM25
-    embedding: list[float]
+    content: str            # data URI of keyframe — ES embeds this via semantic_text
 
 
 def es_client() -> Elasticsearch:
     return Elasticsearch(
         os.environ["ES_URL"],
         api_key=os.environ["ES_API_KEY"],
-        request_timeout=60,
+        request_timeout=120,
     )
 
 
-def index_name(strategy: str, dims: int, quant: str) -> str:
-    return f"broll-{strategy}-{dims}-{quant}"
+def index_name(strategy: str) -> str:
+    return f"broll-{strategy}-semantic"
 
 
-def create_index(es: Elasticsearch, name: str, dims: int, quantization: str = "float") -> None:
-    """
-    quantization options:
-      - 'float'  : standard HNSW with float32. Reference quality.
-      - 'int8'   : int8_hnsw — ~4x storage savings, negligible recall loss
-      - 'bbq'    : bbq_hnsw — Better Binary Quantization, ~32x savings
-    """
+def create_index(es: Elasticsearch, name: str, inference_id: str) -> None:
+    """Create index with a semantic_text field for automatic multimodal embedding."""
     if es.indices.exists(index=name):
         return
-
-    index_type = {
-        "float": "hnsw",
-        "int8":  "int8_hnsw",
-        "bbq":   "bbq_hnsw",
-    }[quantization]
 
     mappings = {
         "properties": {
@@ -78,12 +71,9 @@ def create_index(es: Elasticsearch, name: str, dims: int, quantization: str = "f
             "uploader":    {"type": "keyword"},
             "tags":        {"type": "keyword"},
             "transcript":  {"type": "text", "analyzer": "english"},
-            "embedding":   {
-                "type": "dense_vector",
-                "dims": dims,
-                "index": True,
-                "similarity": "cosine",
-                "index_options": {"type": index_type},
+            "content": {
+                "type": "semantic_text",
+                "inference_id": inference_id,
             },
         }
     }
@@ -91,40 +81,52 @@ def create_index(es: Elasticsearch, name: str, dims: int, quantization: str = "f
 
 
 def bulk_index(es: Elasticsearch, name: str, docs: Iterable[ChunkDoc]) -> int:
-    """Bulk-index. Returns number of docs successfully indexed."""
-    def actions():
-        for d in docs:
-            yield {
-                "_op_type": "index",
-                "_index": name,
-                "_id": d.chunk_id,
-                "_source": asdict(d),
-            }
-    success, errors = helpers.bulk(es, actions(), raise_on_error=False)
+    """Index documents one at a time.
+
+    With semantic_text, ES calls the inference endpoint inline for each document.
+    Batching all 80+ docs in one request reliably exceeds any reasonable timeout,
+    so we index individually with a generous per-doc timeout instead.
+    """
+    success = 0
+    errors = 0
+    for d in docs:
+        try:
+            es.index(index=name, id=d.chunk_id, document=asdict(d), request_timeout=60)
+            success += 1
+        except Exception as e:
+            print(f"  ⚠ indexing error for {d.chunk_id}: {e}")
+            errors += 1
     if errors:
-        print(f"⚠ {len(errors)} indexing errors (first: {errors[0]})")
+        print(f"⚠ {errors} indexing errors")
     return success
 
 
-def knn_search(
+def semantic_search(
     es: Elasticsearch,
     index: str,
-    query_vector: list[float],
+    query: str,
     k: int = 10,
-    num_candidates: int = 100,
     filter_clauses: list[dict] | None = None,
 ) -> list[dict]:
-    """Pure kNN with optional pre-filter."""
-    knn = {
-        "field": "embedding",
-        "query_vector": query_vector,
-        "k": k,
-        "num_candidates": num_candidates,
-    }
-    if filter_clauses:
-        knn["filter"] = {"bool": {"must": filter_clauses}}
+    """Semantic search via the semantic_text field. ES embeds the query automatically."""
+    semantic_clause = {"semantic": {"field": "content", "query": query}}
 
-    res = es.search(index=index, knn=knn, size=k, _source_excludes=["embedding"])
+    if filter_clauses:
+        query_body = {
+            "bool": {
+                "must": [semantic_clause],
+                "filter": filter_clauses,
+            }
+        }
+    else:
+        query_body = semantic_clause
+
+    res = es.search(
+        index=index,
+        query=query_body,
+        size=k,
+        source_excludes=["content"],  # don't return the data URI in results
+    )
     return [
         {**hit["_source"], "_score": hit["_score"]}
         for hit in res["hits"]["hits"]
@@ -135,31 +137,40 @@ def hybrid_search(
     es: Elasticsearch,
     index: str,
     query_text: str,
-    query_vector: list[float],
     k: int = 10,
     filter_clauses: list[dict] | None = None,
 ) -> list[dict]:
-    """RRF fusion of BM25 over transcript + kNN over visual embedding,
-    with optional metadata filter applied to both."""
+    """RRF fusion of BM25 over transcript + semantic search over visual embedding."""
     must = filter_clauses or []
+
+    bm25_retriever = {
+        "standard": {
+            "query": {
+                "bool": {
+                    "must": [{"match": {"transcript": query_text}}],
+                    **({"filter": must} if must else {}),
+                }
+            }
+        }
+    }
+    semantic_retriever = {
+        "standard": {
+            "query": {
+                "bool": {
+                    "must": [{"semantic": {"field": "content", "query": query_text}}],
+                    **({"filter": must} if must else {}),
+                }
+            }
+        }
+    }
+
     res = es.search(
         index=index,
         size=k,
-        _source_excludes=["embedding"],
+        source_excludes=["content"],
         retriever={
             "rrf": {
-                "retrievers": [
-                    {"standard": {"query": {"bool": {
-                        "must": [{"match": {"transcript": query_text}}] + must
-                    }}}},
-                    {"knn": {
-                        "field": "embedding",
-                        "query_vector": query_vector,
-                        "k": k * 3,
-                        "num_candidates": 100,
-                        **({"filter": {"bool": {"must": must}}} if must else {}),
-                    }},
-                ],
+                "retrievers": [bm25_retriever, semantic_retriever],
                 "rank_window_size": 50,
                 "rank_constant": 60,
             }

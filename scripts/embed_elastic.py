@@ -6,10 +6,15 @@ The inference endpoint is configured once in your cluster; this client just
 hits it. Model, dimensions, and quantization are set on the endpoint — not
 per-request.
 
+Video inputs are not sent as raw video — the EIS gateway has a hard ~30s
+timeout that video processing reliably exceeds. Instead, video_input() extracts
+a representative keyframe at the midpoint using ffmpeg and embeds it as an
+image. Image payloads are ~200KB and process in well under a second.
+
 Required env vars:
     ES_URL            Elasticsearch cluster URL
     ES_API_KEY        Cluster API key
-    ES_INFERENCE_ID   Inference endpoint ID (e.g. "jina-omni-embeddings")
+    ES_INFERENCE_ID   Inference endpoint ID (e.g. ".jina-embeddings-v5-omni-small")
 
 Jina task  →  Elastic input_type
   retrieval.passage  →  ingest
@@ -20,6 +25,8 @@ Jina task  →  Elastic input_type
 from __future__ import annotations
 import base64
 import os
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Sequence
@@ -77,15 +84,23 @@ class ElasticInferenceClient:
             inference_id=self.inference_id,
             body=body,
         )
-        embeddings = resp.get("text_embedding") or resp.get("sparse_embedding") or []
-        return [e["embedding"] for e in sorted(embeddings, key=lambda x: x["index"])]
+        # EIS returns {"embeddings": [{"embedding": [...]}, ...]} in order
+        embeddings = resp.get("embeddings") or resp.get("text_embedding") or []
+        return [e["embedding"] for e in embeddings]
 
     @staticmethod
     def _serialize(item: dict | str) -> str:
         """Flatten modality dict to the bare value (base64 string or text)."""
         if isinstance(item, str):
             return item
-        for key in ("text", "video", "image", "audio"):
+        if "image" in item:
+            val = item["image"]
+            # Wrap raw base64 in a data URI so the inference endpoint treats
+            # it as an image, not as a text string to embed.
+            if not val.startswith(("http://", "https://", "data:")):
+                return f"data:image/jpeg;base64,{val}"
+            return val
+        for key in ("text", "video", "audio"):
             if key in item:
                 return item[key]
         raise ValueError(f"Unrecognized input format: {item!r}")
@@ -105,12 +120,37 @@ def image_input(path: str | Path) -> dict:
 
 
 def video_input(path_or_url: str | Path) -> dict:
-    """URL is preferred for large clips; local files are base64-encoded."""
+    """Extract mid-clip keyframe and return as an image input.
+
+    The EIS gateway times out on raw video payloads. A single JPEG frame
+    captures the visual content and stays well within size and latency limits.
+    """
     s = str(path_or_url)
     if s.startswith(("http://", "https://")):
-        return {"video": s}
-    data = base64.b64encode(Path(s).read_bytes()).decode("ascii")
-    return {"video": data}
+        # Remote URL: pass through as image URL (assumes Jina can fetch it)
+        return {"image": s}
+    path = Path(s)
+    # Get duration via ffprobe, seek to midpoint
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        capture_output=True, text=True, check=True,
+    )
+    duration = float(probe.stdout.strip() or "0")
+    seek = duration / 2.0
+
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-ss", str(seek), "-i", str(path),
+             "-frames:v", "1", "-q:v", "3", tmp_path],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        data = base64.b64encode(Path(tmp_path).read_bytes()).decode("ascii")
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+    return {"image": data}
 
 
 def audio_input(path_or_url: str | Path) -> dict:

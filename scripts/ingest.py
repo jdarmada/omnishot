@@ -1,35 +1,36 @@
 """
 End-to-end ingestion pipeline:
 
-    clips/ → chunks → Elastic inference (omni) → Elasticsearch
+    clips/ → chunks → keyframe (data URI) → Elasticsearch (semantic_text)
 
-This is the script the talk opens with — "50 lines and you've got multimodal
-video search." (The rest of the talk is everything you discover after that.)
+With semantic_text, Elasticsearch calls the inference endpoint internally
+at index time — no manual embedding step needed here. We just extract a
+representative keyframe from each chunk, encode it as a data URI, and pass
+it as the `content` field. ES handles the rest.
 
 Usage:
-    python ingest.py --clips ./clips --strategy scene --dims 1024 --quant float
-
-You can re-run with different (strategy, dims, quant) to build out the
-benchmark matrix; each combination lands in its own index.
+    python ingest.py --clips ./clips --strategy scene
 """
 from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import sys
 from pathlib import Path
 
 from tqdm import tqdm
+from dotenv import load_dotenv
 
 # Allow running as: python scripts/ingest.py
 sys.path.insert(0, str(Path(__file__).parent))
 
 from chunk_video import chunk_video, Strategy
-from embed_elastic import ElasticInferenceClient, EmbedConfig, video_input
+from embed_elastic import video_input
 from index_elastic import (
     es_client, create_index, bulk_index, index_name, ChunkDoc,
 )
-from dotenv import load_dotenv
+
 load_dotenv()
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
@@ -40,8 +41,7 @@ def discover_clips(root: Path) -> list[Path]:
 
 
 def load_metadata(metadata_file: Path | None) -> dict[str, dict]:
-    """Optional per-clip metadata: uploader, tags, uploaded_at, transcript.
-    Keyed by clip filename stem. Returns {} if no file provided."""
+    """Optional per-clip metadata: uploader, tags, uploaded_at, transcript."""
     if not metadata_file or not metadata_file.exists():
         return {}
     return json.loads(metadata_file.read_text())
@@ -53,11 +53,13 @@ def main():
     ap.add_argument("--chunks-dir", type=Path, default=Path("./chunks"))
     ap.add_argument("--metadata", type=Path, help="optional metadata JSON")
     ap.add_argument("--strategy", choices=["whole", "scene", "fixed30"], default="scene")
-    ap.add_argument("--dims", type=int, default=1024)
-    ap.add_argument("--quant", choices=["float", "int8", "bbq"], default="float")
-    ap.add_argument("--inference-id", default=None, help="ES inference endpoint ID (overrides ES_INFERENCE_ID)")
-    ap.add_argument("--batch-size", type=int, default=8)
+    ap.add_argument("--inference-id", default=None,
+                    help="ES inference endpoint ID (overrides ES_INFERENCE_ID)")
     args = ap.parse_args()
+
+    inference_id = args.inference_id or os.environ.get("ES_INFERENCE_ID")
+    if not inference_id:
+        sys.exit("Set ES_INFERENCE_ID env var or pass --inference-id")
 
     clips = discover_clips(args.clips)
     if not clips:
@@ -72,38 +74,38 @@ def main():
         all_chunks.extend(chunk_video(clip, args.chunks_dir, args.strategy))
     print(f"Produced {len(all_chunks)} chunks")
 
-    # 2. Embed (in batches)
-    client = ElasticInferenceClient(inference_id=args.inference_id)
-    cfg = EmbedConfig(dimensions=args.dims)
+    # 2. Build docs — extract keyframe as data URI, let ES embed via semantic_text
     docs: list[ChunkDoc] = []
+    for chunk in tqdm(all_chunks, desc="Building content"):
+        try:
+            vi = video_input(chunk.path)          # {"image": "<base64>"}
+            content = f"data:image/jpeg;base64,{vi['image']}"
+        except Exception as e:
+            print(f"  ⚠ keyframe extraction failed for {chunk.chunk_id}: {e}")
+            continue
 
-    for i in tqdm(range(0, len(all_chunks), args.batch_size), desc="Embedding"):
-        batch = all_chunks[i:i + args.batch_size]
-        inputs = [video_input(c.path) for c in batch]
-        vectors = client.embed(inputs, task="retrieval.passage", config=cfg)
+        meta = metadata.get(chunk.clip_id, {})
+        docs.append(ChunkDoc(
+            chunk_id=chunk.chunk_id,
+            clip_id=chunk.clip_id,
+            path=str(chunk.path),
+            start_sec=chunk.start_sec,
+            end_sec=chunk.end_sec,
+            duration=chunk.duration,
+            strategy=chunk.strategy,
+            uploaded_at=meta.get("uploaded_at", dt.date.today().isoformat()),
+            uploader=meta.get("uploader", "unknown"),
+            tags=meta.get("tags", []),
+            transcript=meta.get("transcript"),
+            content=content,
+        ))
 
-        for chunk, vec in zip(batch, vectors):
-            meta = metadata.get(chunk.clip_id, {})
-            docs.append(ChunkDoc(
-                chunk_id=chunk.chunk_id,
-                clip_id=chunk.clip_id,
-                path=str(chunk.path),
-                start_sec=chunk.start_sec,
-                end_sec=chunk.end_sec,
-                duration=chunk.duration,
-                strategy=chunk.strategy,
-                uploaded_at=meta.get("uploaded_at", dt.date.today().isoformat()),
-                uploader=meta.get("uploader", "unknown"),
-                tags=meta.get("tags", []),
-                transcript=meta.get("transcript"),
-                embedding=vec,
-            ))
-
-    # 3. Index
+    # 3. Index — ES calls the inference endpoint per document via semantic_text
     es = es_client()
-    name = index_name(args.strategy, args.dims, args.quant)
-    create_index(es, name, args.dims, args.quant)
-    n = bulk_index(es, name, docs)
+    name = index_name(args.strategy)
+    create_index(es, name, inference_id)
+    print(f"Indexing {len(docs)} chunks into '{name}' (ES embeds each one)...")
+    n = bulk_index(es, name, tqdm(docs, desc="Indexing"))
     print(f"✓ Indexed {n}/{len(docs)} chunks into '{name}'")
 
 

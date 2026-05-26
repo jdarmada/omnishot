@@ -15,17 +15,20 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import List, Optional
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+load_dotenv()
+
 # Allow imports from sibling scripts/
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
-from embed_jina import JinaClient, EmbedConfig  # noqa: E402
-from index_elastic import es_client, knn_search, hybrid_search, index_name  # noqa: E402
+from index_elastic import es_client, semantic_search, hybrid_search, index_name  # noqa: E402
 
 
 app = FastAPI(title="B-Roll Search")
@@ -34,9 +37,8 @@ FRONTEND_DIR = Path(__file__).parent / "frontend"
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 # Defaults — overridable per request
-DEFAULT_INDEX = os.environ.get("BROLL_INDEX", index_name("scene", 1024, "float"))
+DEFAULT_INDEX = os.environ.get("BROLL_INDEX", index_name("scene"))
 
-jina = JinaClient()
 es = es_client()
 
 
@@ -53,13 +55,13 @@ class SearchRequest(BaseModel):
     query: str
     k: int = 12
     # Optional metadata filters — drives the "uploaded this week" demo
-    uploaded_after: str | None = None    # ISO date
-    uploader: str | None = None
-    max_duration: float | None = None
-    tags: list[str] | None = None
+    uploaded_after: Optional[str] = None    # ISO date
+    uploader: Optional[str] = None
+    max_duration: Optional[float] = None
+    tags: Optional[List[str]] = None
     # Hybrid vs. pure vector
     hybrid: bool = False
-    index: str | None = None
+    index: Optional[str] = None
 
 
 class Hit(BaseModel):
@@ -78,7 +80,6 @@ class Hit(BaseModel):
 class SearchResponse(BaseModel):
     hits: list[Hit]
     latency_ms: float
-    embed_ms: float
     search_ms: float
     index_used: str
 
@@ -87,12 +88,7 @@ class SearchResponse(BaseModel):
 async def search(req: SearchRequest):
     index = req.index or DEFAULT_INDEX
 
-    # 1. Embed the query
-    t_embed = time.perf_counter()
-    qvec = jina.embed([req.query], task="retrieval.query", config=EmbedConfig())[0]
-    embed_ms = (time.perf_counter() - t_embed) * 1000
-
-    # 2. Build filters
+    # Build filters
     filters = []
     if req.uploaded_after:
         filters.append({"range": {"uploaded_at": {"gte": req.uploaded_after}}})
@@ -103,13 +99,13 @@ async def search(req: SearchRequest):
     if req.tags:
         filters.append({"terms": {"tags": req.tags}})
 
-    # 3. Search
+    # Search — ES embeds the query via semantic_text automatically
     t_search = time.perf_counter()
     try:
         if req.hybrid:
-            hits = hybrid_search(es, index, req.query, qvec, k=req.k, filter_clauses=filters)
+            hits = hybrid_search(es, index, req.query, k=req.k, filter_clauses=filters)
         else:
-            hits = knn_search(es, index, qvec, k=req.k, filter_clauses=filters)
+            hits = semantic_search(es, index, req.query, k=req.k, filter_clauses=filters)
     except Exception as e:
         raise HTTPException(500, f"Search failed: {e}")
     search_ms = (time.perf_counter() - t_search) * 1000
@@ -121,8 +117,7 @@ async def search(req: SearchRequest):
             score=h["_score"], uploader=h.get("uploader", ""),
             uploaded_at=h.get("uploaded_at", ""), tags=h.get("tags", []),
         ) for h in hits],
-        latency_ms=embed_ms + search_ms,
-        embed_ms=embed_ms,
+        latency_ms=search_ms,
         search_ms=search_ms,
         index_used=index,
     )
@@ -143,13 +138,12 @@ async def stats(index: str = Query(default=DEFAULT_INDEX)):
     if not es.indices.exists(index=index):
         return {"index": index, "exists": False}
     count = es.count(index=index)["count"]
-    stats = es.indices.stats(index=index)
-    size_bytes = stats["indices"][index]["total"]["store"]["size_in_bytes"]
+    # _stats API is not available on serverless — return count only
     return {
         "index": index,
         "exists": True,
         "doc_count": count,
-        "size_mb": round(size_bytes / (1024 * 1024), 2),
+        "size_mb": None,
     }
 
 
