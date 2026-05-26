@@ -435,7 +435,7 @@ async function search() {
     const dt = performance.now() - t0;
 
     $('s-lat').textContent = data.latency_ms.toFixed(0) + ' ms';
-    $('s-embed').textContent = data.embed_ms.toFixed(0) + ' ms';
+    $('s-embed').textContent = (data.embed_ms ?? 0).toFixed(0) + ' ms';
     $('s-search').textContent = data.search_ms.toFixed(0) + ' ms';
 
     renderResults(data.hits);
