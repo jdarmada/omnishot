@@ -2,24 +2,29 @@
 B-Roll Search backend — FastAPI service.
 
 Endpoints:
-    GET  /              → serve the search UI
-    POST /api/search    → query (text) → ranked clips with metadata
-    GET  /api/clip/{id} → stream the underlying clip file
-    GET  /api/stats     → index stats for the corner status badge
+    GET  /                    → serve the search UI
+    POST /api/search          → query (text) → ranked clips with metadata
+    GET  /api/clip/{id}       → stream the underlying clip file
+    GET  /api/stats           → index stats for the corner status badge
+    GET  /api/indices         → list all broll-* indices
+    GET  /api/ingest/stream   → SSE stream for live ingest pipeline progress
 
-Designed to be tiny so the talk's demo code is readable on stage.
+Designed to be readable on stage.
 """
 
 from __future__ import annotations
+import asyncio
+import json
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -30,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from index_elastic import es_client, semantic_search, hybrid_search, index_name  # noqa: E402
 from embed_jina import JinaClient, EmbedConfig  # noqa: E402
+from ingest import run_ingest  # noqa: E402
 
 
 app = FastAPI(title="B-Roll Search")
@@ -43,6 +49,9 @@ DEFAULT_INDEX = os.environ.get("BROLL_INDEX", index_name("scene"))
 es   = es_client()
 jina = JinaClient()
 _embed_cfg = EmbedConfig()
+
+# One worker so concurrent ingest jobs don't stomp each other
+_ingest_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ingest")
 
 
 # -----------------------------------------------------------------------------
@@ -153,8 +162,103 @@ async def stats(index: str = Query(default=DEFAULT_INDEX)):
     }
 
 
+@app.get("/api/pick-folder")
+async def pick_folder():
+    """Open the native OS folder-picker dialog and return the chosen path.
+    Only meaningful when the server is running on the same machine as the browser."""
+    import platform
+    import subprocess
+
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            r = subprocess.run(
+                ["osascript", "-e", "POSIX path of (choose folder)"],
+                capture_output=True, text=True,
+            )
+            path = r.stdout.strip().rstrip("/")
+        elif system == "Linux":
+            # Try zenity (GNOME) then kdialog (KDE)
+            for cmd in [
+                ["zenity", "--file-selection", "--directory", "--title=Choose clips folder"],
+                ["kdialog", "--getexistingdirectory", "."],
+            ]:
+                r = subprocess.run(cmd, capture_output=True, text=True)
+                if r.returncode == 0:
+                    path = r.stdout.strip()
+                    break
+            else:
+                raise HTTPException(400, "No folder picker found (install zenity or kdialog)")
+        elif system == "Windows":
+            ps = ("Add-Type -AssemblyName System.Windows.Forms;"
+                  "$d=New-Object System.Windows.Forms.FolderBrowserDialog;"
+                  "if($d.ShowDialog() -eq 'OK'){$d.SelectedPath}")
+            r = subprocess.run(["powershell", "-Command", ps],
+                                capture_output=True, text=True)
+            path = r.stdout.strip()
+        else:
+            raise HTTPException(400, f"Unsupported platform: {system}")
+    except FileNotFoundError as e:
+        raise HTTPException(400, f"Dialog tool not found: {e}")
+
+    if not path:
+        raise HTTPException(204, "No folder selected")
+    return {"path": path}
+
+
 @app.get("/api/indices")
 async def list_indices():
     """List all broll-* indices so the UI can let you switch configs live."""
     all_idx = es.indices.get(index="broll-*", expand_wildcards="open")
     return sorted(all_idx.keys())
+
+
+@app.get("/api/ingest/stream")
+async def ingest_stream(
+    clips: str,
+    chunks_dir: str = "./chunks",
+    strategy: str = "scene",
+    index_type: str = "hnsw",
+    dims: int = 1024,
+    batch_size: int = 8,
+):
+    """SSE stream that runs the ingest pipeline and pushes progress events.
+
+    Each event is JSON:  {"step": "...", "status": "running|done|error", ...}
+    A final {"step": "done", "status": "done"} is sent when complete.
+    """
+    loop = asyncio.get_running_loop()
+    q: asyncio.Queue[dict | None] = asyncio.Queue()
+
+    def _run() -> None:
+        try:
+            for event in run_ingest(
+                Path(clips), Path(chunks_dir),
+                strategy, index_type, dims, batch_size,
+            ):
+                loop.call_soon_threadsafe(q.put_nowait, event)
+        except Exception as exc:
+            loop.call_soon_threadsafe(q.put_nowait,
+                {"step": "error", "status": "error", "message": str(exc)})
+        finally:
+            loop.call_soon_threadsafe(q.put_nowait, None)  # sentinel
+
+    loop.run_in_executor(_ingest_pool, _run)
+
+    async def generate():
+        while True:
+            event = await q.get()
+            if event is None:
+                yield f"data: {json.dumps({'step': 'done', 'status': 'done'})}\n\n"
+                break
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )

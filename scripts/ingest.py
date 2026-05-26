@@ -9,6 +9,7 @@ dense_vector and searched via kNN.
 
 Usage:
     python ingest.py --clips ./clips --strategy scene
+    python ingest.py --clips ./clips --index-type int8_hnsw
 """
 from __future__ import annotations
 import argparse
@@ -20,6 +21,7 @@ import base64
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Generator
 
 from tqdm import tqdm
 from dotenv import load_dotenv
@@ -69,57 +71,91 @@ def make_video_input(chunk_path: Path, max_width: int = 640, crf: int = 28) -> d
     return {"video": data}
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--clips", type=Path, required=True)
-    ap.add_argument("--chunks-dir", type=Path, default=Path("./chunks"))
-    ap.add_argument("--metadata", type=Path)
-    ap.add_argument("--strategy", choices=["whole", "scene", "fixed30"], default="scene")
-    ap.add_argument("--batch-size", type=int, default=8,
-                    help="inputs per Jina API call (default: 8)")
-    ap.add_argument("--dims", type=int, default=1024,
-                    help="Matryoshka truncation: 32-1024 (default: 1024)")
-    args = ap.parse_args()
+# ---------------------------------------------------------------------------
+# Core pipeline — yields structured progress events so callers (CLI or the
+# FastAPI SSE endpoint) can display live progress.
+# ---------------------------------------------------------------------------
 
-    clips = discover_clips(args.clips)
+def run_ingest(
+    clips_dir: Path,
+    chunks_dir: Path = Path("./chunks"),
+    strategy: str = "scene",
+    index_type: str = "hnsw",
+    dims: int = 1024,
+    batch_size: int = 8,
+    metadata: dict | None = None,
+) -> Generator[dict, None, None]:
+    """Run the full pipeline and yield progress events.
+
+    Each event is a dict with at least:
+        step   — "discover" | "chunk" | "compress" | "embed" | "index"
+        status — "running" | "done" | "error"
+        current, total  — progress counters
+    """
+    meta = metadata or {}
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── 1. Discover ──────────────────────────────────────────────────────────
+    yield {"step": "discover", "status": "running", "current": 0, "total": 0}
+    clips = discover_clips(clips_dir)
     if not clips:
-        sys.exit(f"No videos found under {args.clips}")
-    print(f"Found {len(clips)} source clips")
+        yield {"step": "discover", "status": "error",
+               "message": f"No videos found in {clips_dir}"}
+        return
+    yield {"step": "discover", "status": "done",
+           "current": len(clips), "total": len(clips)}
 
-    metadata = load_metadata(args.metadata)
-    jina = JinaClient()
-    cfg  = EmbedConfig(dimensions=args.dims)
-
-    # 1. Chunk
+    # ── 2. Chunk ─────────────────────────────────────────────────────────────
+    yield {"step": "chunk", "status": "running", "current": 0, "total": len(clips)}
     all_chunks = []
-    for clip in tqdm(clips, desc="Chunking"):
-        all_chunks.extend(chunk_video(clip, args.chunks_dir, args.strategy))
-    print(f"Produced {len(all_chunks)} chunks")
+    for i, clip in enumerate(clips):
+        all_chunks.extend(chunk_video(clip, chunks_dir, strategy))
+        yield {"step": "chunk", "status": "running",
+               "current": i + 1, "total": len(clips),
+               "scenes": len(all_chunks)}
+    yield {"step": "chunk", "status": "done",
+           "current": len(all_chunks), "total": len(all_chunks)}
 
-    # 2. Build visual inputs (compress each chunk to a small proxy)
-    print(f"Batch size: {args.batch_size}")
-    inputs = []
+    # ── 3. Compress ───────────────────────────────────────────────────────────
+    yield {"step": "compress", "status": "running",
+           "current": 0, "total": len(all_chunks)}
+    inputs: list[dict] = []
     valid_chunks = []
-    for chunk in tqdm(all_chunks, desc="Preparing inputs"):
+    for i, chunk in enumerate(all_chunks):
         try:
-            inp = make_video_input(chunk.path)
-            inputs.append(inp)
+            inputs.append(make_video_input(chunk.path))
             valid_chunks.append(chunk)
-        except Exception as e:
-            print(f"  ⚠ input prep failed for {chunk.chunk_id}: {e}")
+        except Exception as exc:
+            yield {"step": "compress", "status": "running",
+                   "current": i + 1, "total": len(all_chunks),
+                   "warn": str(exc)}
+            continue
+        yield {"step": "compress", "status": "running",
+               "current": i + 1, "total": len(all_chunks)}
+    yield {"step": "compress", "status": "done",
+           "current": len(valid_chunks), "total": len(all_chunks)}
 
-    # 3. Embed in batches via Jina API
+    # ── 4. Embed ──────────────────────────────────────────────────────────────
+    jina = JinaClient()
+    cfg  = EmbedConfig(dimensions=dims)
+    batches = [inputs[i:i + batch_size] for i in range(0, len(inputs), batch_size)]
     embeddings: list[list[float]] = []
-    batches = [inputs[i:i+args.batch_size] for i in range(0, len(inputs), args.batch_size)]
-    for batch in tqdm(batches, desc="Embedding (Jina API)"):
+
+    yield {"step": "embed", "status": "running",
+           "current": 0, "total": len(valid_chunks)}
+    for i, batch in enumerate(batches):
         vecs = jina.embed(batch, task="retrieval.passage", config=cfg)
         embeddings.extend(vecs)
-    print(f"Got {len(embeddings)} embeddings")
+        done = min((i + 1) * batch_size, len(valid_chunks))
+        yield {"step": "embed", "status": "running",
+               "current": done, "total": len(valid_chunks)}
+    yield {"step": "embed", "status": "done",
+           "current": len(embeddings), "total": len(valid_chunks)}
 
-    # 4. Build docs
+    # ── 5. Index ──────────────────────────────────────────────────────────────
     docs: list[ChunkDoc] = []
     for chunk, emb in zip(valid_chunks, embeddings):
-        meta = metadata.get(chunk.clip_id, {})
+        m = meta.get(chunk.clip_id, {})
         docs.append(ChunkDoc(
             chunk_id=chunk.chunk_id,
             clip_id=chunk.clip_id,
@@ -128,20 +164,62 @@ def main():
             end_sec=chunk.end_sec,
             duration=chunk.duration,
             strategy=chunk.strategy,
-            uploaded_at=meta.get("uploaded_at", dt.date.today().isoformat()),
-            uploader=meta.get("uploader", "unknown"),
-            tags=meta.get("tags", []),
-            transcript=meta.get("transcript"),
+            uploaded_at=m.get("uploaded_at", dt.date.today().isoformat()),
+            uploader=m.get("uploader", "unknown"),
+            tags=m.get("tags", []),
+            transcript=m.get("transcript"),
             embedding=emb,
         ))
 
-    # 5. Index — no inference calls during indexing, bulk is fast again
+    yield {"step": "index", "status": "running",
+           "current": 0, "total": len(docs)}
     es   = es_client()
-    name = index_name(args.strategy)
-    create_index(es, name, dims=args.dims)
-    print(f"Indexing {len(docs)} chunks into '{name}'...")
-    n = bulk_index(es, name, tqdm(docs, desc="Indexing"))
-    print(f"✓ Indexed {n}/{len(docs)} chunks into '{name}'")
+    name = index_name(strategy, index_type)
+    create_index(es, name, dims=dims, index_type=index_type)
+    n = bulk_index(es, name, docs)
+    yield {"step": "index", "status": "done",
+           "current": n, "total": len(docs), "index": name}
+
+
+# ---------------------------------------------------------------------------
+# CLI entry-point — wraps run_ingest with a simple tqdm-style output
+# ---------------------------------------------------------------------------
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--clips",       type=Path, required=True)
+    ap.add_argument("--chunks-dir",  type=Path, default=Path("./chunks"))
+    ap.add_argument("--metadata",    type=Path)
+    ap.add_argument("--strategy",    choices=["whole", "scene", "fixed30"], default="scene")
+    ap.add_argument("--index-type",
+                    choices=["hnsw", "int8_hnsw", "int4_hnsw", "bbq_hnsw"],
+                    default="hnsw",
+                    help="Vector index quantization (default: hnsw / float32)")
+    ap.add_argument("--batch-size",  type=int, default=8,
+                    help="Inputs per Jina API call (default: 8)")
+    ap.add_argument("--dims",        type=int, default=1024,
+                    help="Matryoshka truncation: 32-1024 (default: 1024)")
+    args = ap.parse_args()
+
+    metadata = load_metadata(args.metadata)
+
+    for event in run_ingest(
+        args.clips, args.chunks_dir, args.strategy,
+        args.index_type, args.dims, args.batch_size, metadata,
+    ):
+        step    = event["step"]
+        status  = event["status"]
+        current = event.get("current", 0)
+        total   = event.get("total", 0)
+
+        if status == "done":
+            extra = f" → '{event['index']}'" if step == "index" else ""
+            print(f"  ✓ {step}: {current}/{total}{extra}")
+        elif status == "error":
+            print(f"  ✗ {step}: {event.get('message', 'unknown error')}")
+        elif total > 0:
+            pct = current / total * 100
+            print(f"  {step}: {current}/{total}  ({pct:.0f}%)", end="\r", flush=True)
 
 
 if __name__ == "__main__":

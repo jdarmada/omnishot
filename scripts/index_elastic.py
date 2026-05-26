@@ -7,8 +7,11 @@ pre-configured endpoint which treats all input as text.
 
 Vectors are stored as dense_vector (cosine similarity) and searched via kNN.
 
-Index naming convention: `broll-{strategy}-jina`
-  e.g.  broll-scene-jina
+Index naming convention: `broll-{strategy}-jina[-{quant}]`
+  e.g.  broll-scene-jina          (float32 HNSW, default)
+        broll-scene-jina-int8     (int8 quantization, ~4× smaller)
+        broll-scene-jina-int4     (int4 quantization, ~8× smaller)
+        broll-scene-jina-bbq      (binary quantization, ~32× smaller)
 """
 
 from __future__ import annotations
@@ -45,12 +48,31 @@ def es_client() -> Elasticsearch:
     )
 
 
-def index_name(strategy: str) -> str:
-    return f"broll-{strategy}-jina"
+# Maps UI/CLI index_type tokens → ES index_options type + index name suffix.
+# float32 HNSW is the baseline; the others trade memory footprint for speed.
+_INDEX_TYPES: dict[str, str] = {
+    "hnsw":      "",       # default — no suffix, backward-compat
+    "int8_hnsw": "-int8",  # 4× smaller, ~same recall     (ES ≥ 8.12)
+    "int4_hnsw": "-int4",  # 8× smaller, small recall hit (ES ≥ 8.15)
+    "bbq_hnsw":  "-bbq",   # 32× smaller, binary quant    (ES ≥ 8.16)
+}
 
 
-def create_index(es: Elasticsearch, name: str, dims: int = 1024) -> None:
-    """Create index with a dense_vector field for kNN search."""
+def index_name(strategy: str, index_type: str = "hnsw") -> str:
+    suffix = _INDEX_TYPES.get(index_type, f"-{index_type}")
+    return f"broll-{strategy}-jina{suffix}"
+
+
+def create_index(es: Elasticsearch, name: str, dims: int = 1024,
+                 index_type: str = "hnsw") -> None:
+    """Create index with a dense_vector field for kNN search.
+
+    index_type controls HNSW quantization:
+        hnsw      — float32, default
+        int8_hnsw — scalar int8  (ES ≥ 8.12)
+        int4_hnsw — scalar int4  (ES ≥ 8.15)
+        bbq_hnsw  — binary quant (ES ≥ 8.16)
+    """
     if es.indices.exists(index=name):
         return
 
@@ -68,15 +90,16 @@ def create_index(es: Elasticsearch, name: str, dims: int = 1024) -> None:
             "tags":        {"type": "keyword"},
             "transcript":  {"type": "text", "analyzer": "english"},
             "embedding": {
-                "type":       "dense_vector",
-                "dims":       dims,
-                "index":      True,
-                "similarity": "cosine",
+                "type":          "dense_vector",
+                "dims":          dims,
+                "index":         True,
+                "similarity":    "cosine",
+                "index_options": {"type": index_type},
             },
         }
     }
     es.indices.create(index=name, mappings=mappings)
-    print(f"Created index '{name}' ({dims}-d cosine dense_vector)")
+    print(f"Created index '{name}' ({dims}-d cosine {index_type})")
 
 
 def bulk_index(es: Elasticsearch, name: str, docs: Iterable[ChunkDoc]) -> int:
