@@ -29,6 +29,7 @@ load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from index_elastic import es_client, semantic_search, hybrid_search, index_name  # noqa: E402
+from embed_jina import JinaClient, EmbedConfig  # noqa: E402
 
 
 app = FastAPI(title="B-Roll Search")
@@ -39,7 +40,9 @@ app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 # Defaults — overridable per request
 DEFAULT_INDEX = os.environ.get("BROLL_INDEX", index_name("scene"))
 
-es = es_client()
+es   = es_client()
+jina = JinaClient()
+_embed_cfg = EmbedConfig()
 
 
 # -----------------------------------------------------------------------------
@@ -99,13 +102,16 @@ async def search(req: SearchRequest):
     if req.tags:
         filters.append({"terms": {"tags": req.tags}})
 
-    # Search — ES embeds the query via semantic_text automatically
+    # Embed the query via Jina API, then kNN search in ES
     t_search = time.perf_counter()
     try:
+        [query_vector] = jina.embed([req.query], task="retrieval.query", config=_embed_cfg)
         if req.hybrid:
-            hits = hybrid_search(es, index, req.query, k=req.k, filter_clauses=filters)
+            hits = hybrid_search(es, index, req.query, query_vector,
+                                 k=req.k, filter_clauses=filters)
         else:
-            hits = semantic_search(es, index, req.query, k=req.k, filter_clauses=filters)
+            hits = semantic_search(es, index, query_vector,
+                                   k=req.k, filter_clauses=filters)
     except Exception as e:
         raise HTTPException(500, f"Search failed: {e}")
     search_ms = (time.perf_counter() - t_search) * 1000
