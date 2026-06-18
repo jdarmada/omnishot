@@ -15,8 +15,10 @@ venv/
 clips/
 chunks/
 embeddings/
+results/
 data/*.png
 data/benchmark_summary.*
+scripts/.query_vectors_cache.json
 
 # OS
 .DS_Store
