@@ -7,11 +7,11 @@ pre-configured endpoint which treats all input as text.
 
 Vectors are stored as dense_vector (cosine similarity) and searched via kNN.
 
-Index naming convention: `broll-{strategy}-jina[-{quant}]`
-  e.g.  broll-scene-jina          (float32 HNSW, default)
-        broll-scene-jina-int8     (int8 quantization, ~4× smaller)
-        broll-scene-jina-int4     (int4 quantization, ~8× smaller)
-        broll-scene-jina-bbq      (binary quantization, ~32× smaller)
+Index naming convention: `broll-{strategy}-{quant}`
+  e.g.  broll-scene-float32   (float32 HNSW, baseline)
+        broll-scene-int8       (int8 quantization, ~4× smaller)
+        broll-scene-int4       (int4 quantization, ~8× smaller)
+        broll-scene-bbq        (binary quantization, ~32× smaller)
 """
 
 from __future__ import annotations
@@ -48,19 +48,18 @@ def es_client() -> Elasticsearch:
     )
 
 
-# Maps UI/CLI index_type tokens → ES index_options type + index name suffix.
-# float32 HNSW is the baseline; the others trade memory footprint for speed.
+# Maps CLI/UI index_type token → (ES index_options type, short label for index name)
 _INDEX_TYPES: dict[str, str] = {
-    "hnsw":      "",       # default — no suffix, backward-compat
-    "int8_hnsw": "-int8",  # 4× smaller, ~same recall     (ES ≥ 8.12)
-    "int4_hnsw": "-int4",  # 8× smaller, small recall hit (ES ≥ 8.15)
-    "bbq_hnsw":  "-bbq",   # 32× smaller, binary quant    (ES ≥ 8.16)
+    "hnsw":      "float32",  # float32 HNSW baseline
+    "int8_hnsw": "int8",     # 4× smaller, ~same recall     (ES ≥ 8.12)
+    "int4_hnsw": "int4",     # 8× smaller, small recall hit (ES ≥ 8.15)
+    "bbq_hnsw":  "bbq",      # 32× smaller, binary quant    (ES ≥ 8.16)
 }
 
 
 def index_name(strategy: str, index_type: str = "hnsw") -> str:
-    suffix = _INDEX_TYPES.get(index_type, f"-{index_type}")
-    return f"broll-{strategy}-jina{suffix}"
+    label = _INDEX_TYPES.get(index_type, index_type)
+    return f"broll-{strategy}-{label}"
 
 
 def create_index(es: Elasticsearch, name: str, dims: int = 1024,
