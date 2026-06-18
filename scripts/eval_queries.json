@@ -1,0 +1,22 @@
+[
+  {"query": "cats playing indoors",               "category": "animals"},
+  {"query": "dog running in a park",              "category": "animals"},
+  {"query": "birds flying over water",            "category": "animals"},
+  {"query": "aerial shot of a forest",            "category": "nature"},
+  {"query": "ocean waves crashing on rocks",      "category": "nature"},
+  {"query": "mountain landscape golden hour",     "category": "nature"},
+  {"query": "rain falling on a window",           "category": "nature"},
+  {"query": "person typing on a laptop",          "category": "people"},
+  {"query": "someone laughing with friends",      "category": "people"},
+  {"query": "chef cooking in a kitchen",          "category": "people"},
+  {"query": "people walking in a busy city",      "category": "people"},
+  {"query": "child playing outdoors",             "category": "people"},
+  {"query": "fast moving traffic at night",       "category": "urban"},
+  {"query": "coffee shop interior morning light", "category": "urban"},
+  {"query": "city skyline at dusk",               "category": "urban"},
+  {"query": "person running on a trail",          "category": "sport"},
+  {"query": "cyclist riding through a city",      "category": "sport"},
+  {"query": "close up of hands on a keyboard",    "category": "tech"},
+  {"query": "bokeh lights blurred background",    "category": "abstract"},
+  {"query": "fire and smoke slow motion",         "category": "abstract"}
+]
