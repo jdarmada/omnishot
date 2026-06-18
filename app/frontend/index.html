@@ -740,6 +740,19 @@
         </div>
       </div>
 
+      <!-- Embedding cache -->
+      <div class="ingest-field">
+        <span class="field-label">Embedding cache</span>
+        <div class="path-row">
+          <input type="text" id="ingest-cache" class="path-input"
+                 placeholder="./chunks/.embed_cache.json  (optional — skips Jina API on re-runs)"
+                 style="font-size:12px;">
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+          Leave blank to skip. On the first run embeddings are saved here; subsequent runs with different index types load from cache and skip the Compress + Embed steps.
+        </div>
+      </div>
+
     </div><!-- /ingest-config -->
 
     <!-- Pipeline visualization -->
@@ -1013,8 +1026,8 @@ function handleEvent(ev) {
     let subText   = '';
     if (step === 'discover') { countText = `${current} clip${current !== 1 ? 's' : ''}`; }
     if (step === 'chunk')    { countText = `${current} scene${current !== 1 ? 's' : ''}`; }
-    if (step === 'compress') { countText = `${current} prox${current !== 1 ? 'ies' : 'y'}`; }
-    if (step === 'embed')    { countText = `${current} vector${current !== 1 ? 's' : ''}`; }
+    if (step === 'compress') { countText = ev.cached ? `${current} cached` : `${current} prox${current !== 1 ? 'ies' : 'y'}`; }
+    if (step === 'embed')    { countText = ev.cached ? `${current} cached` : `${current} vector${current !== 1 ? 's' : ''}`; }
     if (step === 'index')    {
       countText = `${current} indexed`;
       subText   = ev.index || '';
@@ -1072,6 +1085,7 @@ function startIngest() {
   const strategy   = $('ingest-strategy').value;
   const dims       = $('ingest-dims').value;
   const batchSize  = $('ingest-batch').value;
+  const cache      = $('ingest-cache').value.trim();
 
   resetPipeline();
   ingest.running = true;
@@ -1079,7 +1093,9 @@ function startIngest() {
   $('ingest-btn').textContent = 'Running…';
   startElapsedTimer();
 
-  const params = new URLSearchParams({ clips, strategy, index_type: indexType, dims, batch_size: batchSize });
+  const paramObj = { clips, strategy, index_type: indexType, dims, batch_size: batchSize };
+  if (cache) paramObj.cache = cache;
+  const params = new URLSearchParams(paramObj);
   const sse = new EventSource(`/api/ingest/stream?${params}`);
   ingest.sse = sse;
 

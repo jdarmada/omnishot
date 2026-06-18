@@ -44,7 +44,7 @@ FRONTEND_DIR = Path(__file__).parent / "frontend"
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 # Defaults — overridable per request
-DEFAULT_INDEX = os.environ.get("BROLL_INDEX", index_name("scene"))
+DEFAULT_INDEX = os.environ.get("BROLL_INDEX", index_name("scene", "hnsw"))
 
 es   = es_client()
 jina = JinaClient()
@@ -91,7 +91,8 @@ class Hit(BaseModel):
 
 class SearchResponse(BaseModel):
     hits: list[Hit]
-    latency_ms: float
+    latency_ms: float   # total = embed_ms + search_ms
+    embed_ms: float
     search_ms: float
     index_used: str
 
@@ -111,19 +112,21 @@ async def search(req: SearchRequest):
     if req.tags:
         filters.append({"terms": {"tags": req.tags}})
 
-    # Embed the query via Jina API, then kNN search in ES
-    t_search = time.perf_counter()
     try:
+        t0 = time.perf_counter()
         [query_vector] = jina.embed([req.query], task="retrieval.query", config=_embed_cfg)
+        embed_ms = (time.perf_counter() - t0) * 1000
+
+        t1 = time.perf_counter()
         if req.hybrid:
             hits = hybrid_search(es, index, req.query, query_vector,
                                  k=req.k, filter_clauses=filters)
         else:
             hits = semantic_search(es, index, query_vector,
                                    k=req.k, filter_clauses=filters)
+        search_ms = (time.perf_counter() - t1) * 1000
     except Exception as e:
         raise HTTPException(500, f"Search failed: {e}")
-    search_ms = (time.perf_counter() - t_search) * 1000
 
     return SearchResponse(
         hits=[Hit(
@@ -132,7 +135,8 @@ async def search(req: SearchRequest):
             score=h["_score"], uploader=h.get("uploader", ""),
             uploaded_at=h.get("uploaded_at", ""), tags=h.get("tags", []),
         ) for h in hits],
-        latency_ms=search_ms,
+        latency_ms=embed_ms + search_ms,
+        embed_ms=embed_ms,
         search_ms=search_ms,
         index_used=index,
     )
@@ -221,20 +225,27 @@ async def ingest_stream(
     index_type: str = "hnsw",
     dims: int = 1024,
     batch_size: int = 8,
+    cache: str = "",
 ):
     """SSE stream that runs the ingest pipeline and pushes progress events.
 
     Each event is JSON:  {"step": "...", "status": "running|done|error", ...}
     A final {"step": "done", "status": "done"} is sent when complete.
+
+    Pass cache=<path> to load/save embeddings so re-running with a different
+    index_type skips the Jina API entirely.
     """
     loop = asyncio.get_running_loop()
     q: asyncio.Queue[dict | None] = asyncio.Queue()
+
+    embed_cache_path = Path(cache) if cache else None
 
     def _run() -> None:
         try:
             for event in run_ingest(
                 Path(clips), Path(chunks_dir),
                 strategy, index_type, dims, batch_size,
+                None, embed_cache_path,
             ):
                 loop.call_soon_threadsafe(q.put_nowait, event)
         except Exception as exc:
