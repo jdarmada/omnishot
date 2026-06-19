@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import os
 import sys
 import base64
@@ -125,6 +126,14 @@ def load_embed_cache(path: Path | None) -> dict[str, list[float]]:
 
 def save_embed_cache(path: Path, cache: dict[str, list[float]]) -> None:
     path.write_text(json.dumps(cache))
+
+
+def matryoshka_truncate(vec: list[float], dims: int) -> list[float]:
+    """Slice first `dims` dimensions and renormalize — valid because Jina v5-omni
+    is Matryoshka-trained so the first N dims form a coherent subspace."""
+    truncated = vec[:dims]
+    norm = math.sqrt(sum(x * x for x in truncated))
+    return [x / norm for x in truncated] if norm > 0 else truncated
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +264,8 @@ def run_ingest(
         emb = embed_cache.get(chunk.chunk_id)
         if emb is None:
             continue  # failed to compress/embed
+        if dims < len(emb):
+            emb = matryoshka_truncate(emb, dims)
         m = meta.get(chunk.clip_id, {})
         docs.append(ChunkDoc(
             chunk_id=chunk.chunk_id,
@@ -274,7 +285,7 @@ def run_ingest(
     yield {"step": "index", "status": "running",
            "current": 0, "total": len(docs)}
     es   = es_client()
-    name = index_name(strategy, index_type)
+    name = index_name(strategy, index_type, dims)
     create_index(es, name, dims=dims, index_type=index_type)
     n = bulk_index(es, name, docs)
     yield {"step": "index", "status": "done",
