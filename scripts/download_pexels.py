@@ -1,7 +1,7 @@
 """
 Download a diverse b-roll corpus from Pexels.
 
-Queries span 8 visual categories so the corpus covers the same range as
+Queries span 12 visual categories so the corpus covers the same range as
 eval_queries.json — a homogeneous corpus makes all quantization methods
 look equally good, defeating the benchmark.
 
@@ -16,7 +16,7 @@ Usage:
     python download_pexels.py --out ./clips
     python download_pexels.py --out ./clips --total 5000
     python download_pexels.py --out ./clips --total 5000 --pages 3 --quality hd
-    python download_pexels.py --out ./clips --categories animals nature
+    python download_pexels.py --out ./clips --categories animals nature medical_science
 """
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ from tqdm import tqdm
 load_dotenv()
 
 # ---------------------------------------------------------------------------
-# Search terms — 8 categories × ~12 terms = ~96 queries.
-# At 80 clips/page × 1 page each → up to ~7680 unique clips before dedup.
+# Search terms — 12 categories × ~12 terms = ~144 queries.
+# At 80 clips/page × 1 page each → up to ~11520 unique clips before dedup.
 # Diverse within each category: different subjects, lighting, motion types.
 # ---------------------------------------------------------------------------
 SEARCH_TERMS: dict[str, list[str]] = {
@@ -86,6 +86,37 @@ SEARCH_TERMS: dict[str, list[str]] = {
         "fire flames closeup", "paint dropping in water", "sand falling",
         "rain drops window", "soap bubbles", "glitter falling",
         "ink diffusing water", "confetti slow motion", "light rays forest",
+    ],
+    "medical_science": [
+        "surgery operating room", "laboratory equipment scientist",
+        "microscope biology", "medical scan imaging",
+        "lab researcher experiment", "hospital clinical equipment",
+        "pharmaceutical lab", "DNA science biology", "stethoscope doctor",
+        "blood sample test tube", "x-ray medical", "brain scan MRI",
+    ],
+    "architecture": [
+        "modern building exterior glass", "interior architecture minimal",
+        "historic cathedral interior", "glass skyscraper reflection",
+        "bridge architectural structure", "industrial warehouse interior",
+        "museum building modern", "residential house exterior",
+        "staircase spiral architecture", "arched hallway corridor",
+        "brutalist concrete building", "wooden cabin architecture",
+    ],
+    "weather": [
+        "thunderstorm lightning bolt", "dense morning fog",
+        "heavy rain street puddle", "snow blizzard winter",
+        "dramatic storm clouds sunset", "hailstorm ice",
+        "rainbow after rain", "wind dust storm desert",
+        "frozen ice frost", "heat wave shimmer", "mist waterfall",
+        "overcast moody sky",
+    ],
+    "transportation": [
+        "airplane takeoff runway", "train station departure board",
+        "container ship port cargo", "highway aerial view traffic",
+        "subway station commuters rushing", "cargo truck highway",
+        "bicycle lane city", "motorcycle highway ride",
+        "helicopter aerial city", "speedboat water wake",
+        "electric scooter city", "bus city street",
     ],
 }
 
@@ -175,7 +206,7 @@ def main():
                     help="Pages to fetch per search term (default: 1)")
     ap.add_argument("--quality",      choices=["sd", "hd", "fhd"], default="hd")
     ap.add_argument("--categories",   nargs="*", default=None,
-                    help="Subset of categories (default: all 8)")
+                    help="Subset of categories (default: all 12)")
     ap.add_argument("--dry-run",      action="store_true")
     ap.add_argument("--reset",        action="store_true",
                     help="Ignore existing checkpoint and start fresh")

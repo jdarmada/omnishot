@@ -1,22 +1,64 @@
 [
-  {"query": "cats playing indoors",               "category": "animals"},
-  {"query": "dog running in a park",              "category": "animals"},
-  {"query": "birds flying over water",            "category": "animals"},
-  {"query": "aerial shot of a forest",            "category": "nature"},
-  {"query": "ocean waves crashing on rocks",      "category": "nature"},
-  {"query": "mountain landscape golden hour",     "category": "nature"},
-  {"query": "rain falling on a window",           "category": "nature"},
-  {"query": "person typing on a laptop",          "category": "people"},
-  {"query": "someone laughing with friends",      "category": "people"},
-  {"query": "chef cooking in a kitchen",          "category": "people"},
-  {"query": "people walking in a busy city",      "category": "people"},
-  {"query": "child playing outdoors",             "category": "people"},
-  {"query": "fast moving traffic at night",       "category": "urban"},
-  {"query": "coffee shop interior morning light", "category": "urban"},
-  {"query": "city skyline at dusk",               "category": "urban"},
-  {"query": "person running on a trail",          "category": "sport"},
-  {"query": "cyclist riding through a city",      "category": "sport"},
-  {"query": "close up of hands on a keyboard",    "category": "tech"},
-  {"query": "bokeh lights blurred background",    "category": "abstract"},
-  {"query": "fire and smoke slow motion",         "category": "abstract"}
+  {"query": "domestic feline exhibiting predatory play behavior",               "category": "animals"},
+  {"query": "large canine at full stride across open terrain",                  "category": "animals"},
+  {"query": "synchronized aerial movement of a bird flock",                    "category": "animals"},
+  {"query": "apex predator moving through natural habitat",                     "category": "animals"},
+
+  {"query": "dense forest canopy viewed from aerial perspective",               "category": "nature"},
+  {"query": "rhythmic wave energy dissipating against rocky coast",             "category": "nature"},
+  {"query": "warm directional light at the transition between day and night",   "category": "nature"},
+  {"query": "precipitation impact on a transparent surface",                    "category": "nature"},
+
+  {"query": "individual in focused cognitive work at a desk",                   "category": "people"},
+  {"query": "group experiencing spontaneous shared laughter",                   "category": "people"},
+  {"query": "culinary professional executing a complex technique",              "category": "people"},
+  {"query": "dense pedestrian movement through a commercial district",          "category": "people"},
+
+  {"query": "vehicle streams creating light trails in darkness",                "category": "urban"},
+  {"query": "intimate social gathering space in morning hours",                 "category": "urban"},
+  {"query": "compressed urban density viewed from elevation",                   "category": "urban"},
+  {"query": "subterranean transit system at peak demand",                       "category": "urban"},
+
+  {"query": "solo endurance athlete on unpaved natural terrain",                "category": "sport"},
+  {"query": "human-powered vehicle navigating city infrastructure",             "category": "sport"},
+  {"query": "athlete demonstrating controlled flexibility under load",          "category": "sport"},
+  {"query": "fast-break play in an indoor court sport",                         "category": "sport"},
+
+  {"query": "maillard reaction occurring in a professional kitchen",            "category": "food"},
+  {"query": "precision liquid dispensing in specialty coffee preparation",      "category": "food"},
+  {"query": "hands working raw ingredients on a preparation surface",           "category": "food"},
+  {"query": "slow fermentation and shaping of artisan bread dough",             "category": "food"},
+
+  {"query": "articulated mechanical arm performing repetitive precision task",  "category": "tech"},
+  {"query": "unmanned aircraft system operating in open airspace",              "category": "tech"},
+  {"query": "electronic engineer examining component-level circuit detail",     "category": "tech"},
+  {"query": "server infrastructure in a climate-controlled facility",           "category": "tech"},
+
+  {"query": "light scattering through airborne particulate matter",             "category": "abstract"},
+  {"query": "rapid oxidation captured at high frame rate",                      "category": "abstract"},
+  {"query": "miscible fluid dynamics creating spontaneous color pattern",       "category": "abstract"},
+  {"query": "surface tension phenomena at a liquid boundary",                   "category": "abstract"},
+
+  {"query": "sterile procedure performed by gloved hands under magnification",  "category": "medical_science"},
+  {"query": "biological specimen structure revealed through optical magnification", "category": "medical_science"},
+  {"query": "clinical assessment using non-invasive diagnostic equipment",      "category": "medical_science"},
+  {"query": "controlled chemical reaction observed in laboratory environment",  "category": "medical_science"},
+
+  {"query": "geometric repetition in a structural facade under directional light", "category": "architecture"},
+  {"query": "interior volume with diffused natural illumination from above",    "category": "architecture"},
+  {"query": "glass and steel structure reflecting the surrounding sky",         "category": "architecture"},
+  {"query": "ornamental stonework detail on a historic facade",                 "category": "architecture"},
+
+  {"query": "convective storm system producing dramatic cloud formations",      "category": "weather"},
+  {"query": "reduced visibility due to suspended atmospheric moisture",         "category": "weather"},
+  {"query": "rapid cloud movement compressed through time",                     "category": "weather"},
+  {"query": "electrical discharge illuminating a night sky",                    "category": "weather"},
+
+  {"query": "mass transit carriages in motion through an underground tunnel",   "category": "transportation"},
+  {"query": "commercial aircraft during final approach or takeoff",             "category": "transportation"},
+  {"query": "highway interchange and vehicle flow viewed from above",           "category": "transportation"},
+  {"query": "maritime vessel navigating open water from a distance",            "category": "transportation"},
+
+  {"query": "human figure dwarfed by natural landscape establishing scale",     "category": "nature"},
+  {"query": "technology operating in an organic or natural context",            "category": "tech"}
 ]
