@@ -65,20 +65,28 @@ def embed_queries(queries: list[dict], force: bool = False) -> list[list[float]]
 # ---------------------------------------------------------------------------
 
 def get_broll_indices(es) -> list[str]:
-    """Return all broll-* indices. Float32 baseline first."""
-    all_idx = es.indices.get(index="broll-*", expand_wildcards="open")
-    indices  = sorted(all_idx.keys())
-    baseline = [i for i in indices if i.endswith("-float32")]
-    rest     = [i for i in indices if not i.endswith("-float32")]
-    return baseline + rest
+    """Return all broll-* indices, sorted by dims desc then quant type.
+    Float32 at each dim level comes first (used as per-dim baseline)."""
+    all_idx  = es.indices.get(index="broll-*", expand_wildcards="open")
+    indices  = sorted(all_idx.keys(), key=lambda i: (-(parse_dims(i) or 0), i))
+    return indices
+
+
+def parse_dims(index: str) -> int | None:
+    """Extract dims from index name e.g. broll-scene-1024d-float32 → 1024."""
+    for part in index.split("-"):
+        if part.endswith("d") and part[:-1].isdigit():
+            return int(part[:-1])
+    return None
 
 
 def index_label(index: str) -> str:
     """Human-readable label for display."""
-    if index.endswith("-float32"):   return "float32 HNSW (baseline)"
-    if index.endswith("-int8"):      return "int8 HNSW  (4× smaller)"
-    if index.endswith("-int4"):      return "int4 HNSW  (8× smaller)"
-    if index.endswith("-bbq"):       return "BBQ HNSW   (32× smaller)"
+    dims = parse_dims(index) or "?"
+    if index.endswith("-float32"):   return f"float32  {dims}d  (baseline)"
+    if index.endswith("-int8"):      return f"int8     {dims}d"
+    if index.endswith("-int4"):      return f"int4     {dims}d"
+    if index.endswith("-bbq"):       return f"BBQ      {dims}d"
     return index
 
 
@@ -86,22 +94,37 @@ def index_label(index: str) -> str:
 # Benchmarking
 # ---------------------------------------------------------------------------
 
+def _truncate_normalize(vec: list[float], dims: int) -> list[float]:
+    import math
+    t = vec[:dims]
+    n = math.sqrt(sum(x * x for x in t))
+    return [x / n for x in t] if n > 0 else t
+
+
 def benchmark_index(
     es,
     index: str,
     query_vectors: list[list[float]],
     k: int = 10,
     runs: int = 20,
+    num_candidates: int = 100,
 ) -> dict:
     """Run each query `runs` times, collect latencies and top-k hits."""
+    dims = parse_dims(index)
+    vecs = (
+        [_truncate_normalize(v, dims) for v in query_vectors]
+        if dims and dims < len(query_vectors[0])
+        else query_vectors
+    )
+
     latencies_ms: list[float] = []
     hits_per_query: list[list[str]] = []
 
-    for vec in tqdm(query_vectors, desc=f"  {index}", leave=False):
+    for vec in tqdm(vecs, desc=f"  {index}", leave=False):
         first_hits: list[str] = []
         for run in range(runs):
             t0   = time.perf_counter()
-            hits = knn_search(es, index, vec, k=k)
+            hits = knn_search(es, index, vec, k=k, num_candidates=num_candidates)
             latencies_ms.append((time.perf_counter() - t0) * 1000)
             if run == 0:
                 first_hits = [h["chunk_id"] for h in hits]
@@ -114,6 +137,7 @@ def benchmark_index(
         "hits_per_query": hits_per_query,
         "k":              k,
         "runs":           runs,
+        "num_candidates": num_candidates,
     }
 
 
@@ -136,17 +160,15 @@ def get_index_stats(es, index: str) -> dict:
     except Exception:
         count = None
 
-    size_mb = seg_mb = None
+    size_mb = None
     try:
         stats   = es.indices.stats(index=index)
         pri     = stats["indices"][index]["primaries"]
         size_mb = round(pri["store"]["size_in_bytes"] / 1024 / 1024, 1)
-        # Segment memory includes the HNSW graph — this is what quantization shrinks
-        seg_mb  = round(pri["segments"]["memory_in_bytes"] / 1024 / 1024, 2)
     except Exception:
-        pass  # serverless — _stats not available
+        pass
 
-    return {"doc_count": count, "size_mb": size_mb, "seg_mb": seg_mb}
+    return {"doc_count": count, "size_mb": size_mb, "dims": parse_dims(index)}
 
 
 # ---------------------------------------------------------------------------
@@ -179,8 +201,9 @@ def run_benchmarks(
         r["stats"]  = get_index_stats(es, index)
         results[index] = r
 
-    # Recall against float32 baseline
-    baseline = next((i for i in indices if i.endswith("-float32")), indices[0])
+    # Recall against the highest-dim float32 index as ground truth
+    float32_indices = [i for i in indices if i.endswith("-float32")]
+    baseline = max(float32_indices, key=lambda i: parse_dims(i) or 0, default=indices[0])
     gt_hits  = results[baseline]["hits_per_query"]
     for index, r in results.items():
         r["recall_at_k"] = (
@@ -200,15 +223,15 @@ def _fmt(val, fmt=".3f", suffix=""):
 
 
 def print_table(results: dict, k: int = 10):
-    col = [36, 12, 10, 10, 8, 10, 11]
+    col = [38, 12, 8, 10, 10, 8, 10]
     header = (
         f"{'Index':<{col[0]}}"
         f"{'Recall@'+str(k):<{col[1]}}"
-        f"{'p50':>{col[2]}}"
-        f"{'p99':>{col[3]}}"
-        f"{'Docs':>{col[4]}}"
-        f"{'Size MB':>{col[5]}}"
-        f"{'Seg MB':>{col[6]}}"
+        f"{'Dims':>{col[2]}}"
+        f"{'p50':>{col[3]}}"
+        f"{'p99':>{col[4]}}"
+        f"{'Docs':>{col[5]}}"
+        f"{'Size MB':>{col[6]}}"
     )
     sep = "─" * sum(col)
     print(f"\n{sep}\n{header}\n{sep}")
@@ -220,15 +243,15 @@ def print_table(results: dict, k: int = 10):
         rec   = r.get("recall_at_k")
         docs  = r["stats"].get("doc_count")
         size  = r["stats"].get("size_mb")
-        seg   = r["stats"].get("seg_mb")
+        dims  = r["stats"].get("dims")
         print(
             f"{idx:<{col[0]}}"
             f"{_fmt(rec):<{col[1]}}"
-            f"{_fmt(p50, '.1f', 'ms'):>{col[2]}}"
-            f"{_fmt(p99, '.1f', 'ms'):>{col[3]}}"
-            f"{str(docs) if docs else '—':>{col[4]}}"
-            f"{_fmt(size, '.1f', ' MB'):>{col[5]}}"
-            f"{_fmt(seg, '.2f', ' MB'):>{col[6]}}"
+            f"{str(dims) if dims else '—':>{col[2]}}"
+            f"{_fmt(p50, '.1f', 'ms'):>{col[3]}}"
+            f"{_fmt(p99, '.1f', 'ms'):>{col[4]}}"
+            f"{str(docs) if docs else '—':>{col[5]}}"
+            f"{_fmt(size, '.1f', ' MB'):>{col[6]}}"
         )
     print(sep)
 
@@ -273,13 +296,14 @@ def compare_saved(results_dir: Path = RESULTS_DIR, k_filter: int | None = None):
 def _print_saved_table(data: dict):
     k       = data["k"]
     indices = data["indices"]
-    col     = [36, 12, 10, 10, 10]
+    col     = [38, 12, 8, 10, 10, 10]
     header  = (
         f"{'Index':<{col[0]}}"
         f"{'Recall@'+str(k):<{col[1]}}"
-        f"{'p50':>{col[2]}}"
-        f"{'p99':>{col[3]}}"
-        f"{'Size MB':>{col[4]}}"
+        f"{'Dims':>{col[2]}}"
+        f"{'p50':>{col[3]}}"
+        f"{'p99':>{col[4]}}"
+        f"{'Size MB':>{col[5]}}"
     )
     sep = "─" * sum(col)
     print(f"{sep}\n{header}\n{sep}")
@@ -288,14 +312,94 @@ def _print_saved_table(data: dict):
         p50  = np.percentile(lats, 50)
         p99  = np.percentile(lats, 99)
         rec  = r.get("recall_at_k")
+        dims = r["stats"].get("dims")
         size = r["stats"].get("size_mb")
         print(
             f"{idx:<{col[0]}}"
             f"{_fmt(rec):<{col[1]}}"
-            f"{_fmt(p50, '.1f', 'ms'):>{col[2]}}"
-            f"{_fmt(p99, '.1f', 'ms'):>{col[3]}}"
-            f"{_fmt(size, '.1f', ' MB'):>{col[4]}}"
+            f"{str(dims) if dims else '—':>{col[2]}}"
+            f"{_fmt(p50, '.1f', 'ms'):>{col[3]}}"
+            f"{_fmt(p99, '.1f', 'ms'):>{col[4]}}"
+            f"{_fmt(size, '.1f', ' MB'):>{col[5]}}"
         )
+    print(sep)
+
+
+# ---------------------------------------------------------------------------
+# num_candidates sweep — shows recall recovery curve
+# ---------------------------------------------------------------------------
+
+def run_candidates_sweep(
+    k: int = 10,
+    candidates_list: list[int] = None,
+    queries_path: Path = QUERIES_FILE,
+) -> dict:
+    """For each index, benchmark recall at multiple num_candidates values.
+
+    Returns {index: {nc: {recall, p50, p99}}}
+    """
+    candidates_list = candidates_list or [50, 100, 200, 500]
+
+    print("\n── Queries ──────────────────────────────────")
+    queries       = load_queries(queries_path)
+    query_vectors = embed_queries(queries)
+    print(f"  {len(queries)} queries loaded")
+
+    es      = es_client()
+    indices = get_broll_indices(es)
+    if not indices:
+        sys.exit("No broll-* indices found. Run ingest first.")
+
+    # Ground truth: highest-dim float32
+    float32_indices = [i for i in indices if i.endswith("-float32")]
+    baseline = max(float32_indices, key=lambda i: parse_dims(i) or 0, default=indices[0])
+    print(f"\n  Ground truth: {baseline}")
+    print(f"  Sweeping num_candidates: {candidates_list}")
+
+    # Get ground truth hits (use largest nc for most accurate ground truth)
+    gt_result = benchmark_index(es, baseline, query_vectors,
+                                k=k, runs=3, num_candidates=max(candidates_list))
+    gt_hits   = gt_result["hits_per_query"]
+
+    sweep: dict[str, dict] = {}
+    for index in indices:
+        sweep[index] = {}
+        for nc in candidates_list:
+            r = benchmark_index(es, index, query_vectors, k=k, runs=5, num_candidates=nc)
+            lats = np.array(r["latencies_ms"])
+            recall = (1.0 if index == baseline
+                      else compute_recall(r["hits_per_query"], gt_hits, k))
+            sweep[index][nc] = {
+                "recall": recall,
+                "p50":    float(np.percentile(lats, 50)),
+                "p99":    float(np.percentile(lats, 99)),
+            }
+            print(f"  {index}  nc={nc}  recall={recall:.3f}  p50={np.percentile(lats,50):.1f}ms")
+
+    return sweep
+
+
+def print_candidates_table(sweep: dict, candidates_list: list[int], k: int = 10):
+    nc_w  = 9
+    idx_w = 38
+    lat_w = 14
+    total_w = idx_w + nc_w * len(candidates_list) + lat_w
+    sep = "─" * total_w
+
+    header = f"{'Index':<{idx_w}}"
+    for nc in candidates_list:
+        header += f"{'nc='+str(nc):>{nc_w}}"
+    header += f"{'p50@nc='+str(candidates_list[-1]):>{lat_w}}"
+
+    print(f"\n{sep}\n{header}\n{sep}")
+    for index, nc_results in sweep.items():
+        row = f"{index:<{idx_w}}"
+        for nc in candidates_list:
+            rec = nc_results.get(nc, {}).get("recall")
+            row += f"{_fmt(rec, '.3f'):>{nc_w}}"
+        p50 = nc_results.get(candidates_list[-1], {}).get("p50")
+        row += f"{_fmt(p50, '.1f', 'ms'):>{lat_w}}"
+        print(row)
     print(sep)
 
 
@@ -305,17 +409,26 @@ def _print_saved_table(data: dict):
 
 def main():
     ap = argparse.ArgumentParser(description="Benchmark broll-* ES indices")
-    ap.add_argument("--k",       type=int, default=10,
+    ap.add_argument("--k",          type=int, default=10,
                     help="Top-k to evaluate recall against (default: 10)")
-    ap.add_argument("--runs",    type=int, default=20,
+    ap.add_argument("--runs",       type=int, default=20,
                     help="Timing runs per query (default: 20)")
-    ap.add_argument("--queries", type=Path, default=QUERIES_FILE,
+    ap.add_argument("--queries",    type=Path, default=QUERIES_FILE,
                     help="Path to eval_queries.json")
-    ap.add_argument("--compare", action="store_true",
+    ap.add_argument("--compare",    action="store_true",
                     help="Print comparison table from all saved results")
-    ap.add_argument("--no-save", action="store_true",
+    ap.add_argument("--no-save",    action="store_true",
                     help="Don't write results to disk")
+    ap.add_argument("--candidates", nargs="+", type=int, default=None,
+                    metavar="N",
+                    help="Sweep num_candidates values e.g. --candidates 50 100 200 500")
     args = ap.parse_args()
+
+    if args.candidates:
+        sweep = run_candidates_sweep(k=args.k, candidates_list=args.candidates,
+                                     queries_path=args.queries)
+        print_candidates_table(sweep, args.candidates, k=args.k)
+        return
 
     if args.compare:
         compare_saved(k_filter=args.k if args.k != 10 else None)
