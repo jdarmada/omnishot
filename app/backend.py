@@ -44,7 +44,7 @@ FRONTEND_DIR = Path(__file__).parent / "frontend"
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 # Defaults — overridable per request
-DEFAULT_INDEX = os.environ.get("BROLL_INDEX", index_name("scene", "hnsw"))
+DEFAULT_INDEX = os.environ.get("BROLL_INDEX", index_name("scene", "hnsw", 1024))
 
 es   = es_client()
 jina = JinaClient()

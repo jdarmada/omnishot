@@ -41,11 +41,11 @@ class ChunkDoc:
 
 
 def es_client() -> Elasticsearch:
-    return Elasticsearch(
-        os.environ["ES_URL"],
-        api_key=os.environ["ES_API_KEY"],
-        request_timeout=120,
-    )
+    kwargs: dict = {"request_timeout": 120}
+    api_key = os.environ.get("ES_API_KEY")
+    if api_key:
+        kwargs["api_key"] = api_key
+    return Elasticsearch(os.environ["ES_URL"], **kwargs)
 
 
 # Maps CLI/UI index_type token → (ES index_options type, short label for index name)
@@ -57,9 +57,9 @@ _INDEX_TYPES: dict[str, str] = {
 }
 
 
-def index_name(strategy: str, index_type: str = "hnsw") -> str:
+def index_name(strategy: str, index_type: str = "hnsw", dims: int = 1024) -> str:
     label = _INDEX_TYPES.get(index_type, index_type)
-    return f"broll-{strategy}-{label}"
+    return f"broll-{strategy}-{dims}d-{label}"
 
 
 def create_index(es: Elasticsearch, name: str, dims: int = 1024,
