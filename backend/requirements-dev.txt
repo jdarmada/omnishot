@@ -1,4 +1,4 @@
 # Development / CI tooling
-ruff>=0.15.22
-pytest>=8.0.0
+ruff>=0.16.0
+pytest>=9.1.1
 httpx>=0.28.1
