@@ -1,0 +1,13 @@
+# Core
+elasticsearch>=9.0.0
+requests>=2.32.0
+python-dotenv>=1.0.0
+tqdm>=4.66.0
+
+# Video processing
+scenedetect[opencv]>=0.6.4
+yt-dlp>=2024.1.0
+
+# API server
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0

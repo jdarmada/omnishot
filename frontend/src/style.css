@@ -1,0 +1,267 @@
+:root {
+  --paper: #f4f1ea;
+  --paper-2: #ece8de;
+  --ink: #141412;
+  --muted: #8a857a;
+  --border: #d8d3c6;
+  --accent: #e04f2e;
+  --good: #3a7d4f;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "JetBrains Mono", monospace;
+  padding: 48px 24px;
+}
+
+.wrap {
+  max-width: 1040px;
+  margin: 0 auto;
+}
+
+h1 {
+  font-family: "Fraunces", serif;
+  font-size: 42px;
+  line-height: 1.05;
+  margin-bottom: 28px;
+}
+
+.search-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+input {
+  flex: 1;
+  font: inherit;
+  font-size: 16px;
+  padding: 16px 18px;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  outline: none;
+}
+
+input:focus {
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+button.go {
+  font: inherit;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: var(--ink);
+  color: var(--paper);
+  border: 2px solid var(--ink);
+  padding: 0 28px;
+  cursor: pointer;
+}
+
+button.go:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+button.go:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.statusline {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 36px;
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+}
+
+.statusline strong {
+  color: var(--ink);
+}
+
+.statusline .busy {
+  color: var(--accent);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 18px;
+}
+
+.clip {
+  background: var(--paper-2);
+  border: 1px solid var(--border);
+  position: relative;
+}
+
+.clip:hover {
+  border-color: var(--ink);
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+.clip video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+  background: #111;
+}
+
+.rank {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+}
+
+.rank.top {
+  background: var(--accent);
+}
+
+.meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  font-size: 11px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+
+.meta .id {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55%;
+}
+
+.reveal,
+.similar {
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.reveal:hover {
+  border-color: var(--good);
+  color: var(--good);
+}
+
+.reveal.done {
+  border-color: var(--good);
+  color: var(--good);
+}
+
+.similar:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.timecode {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.timecode b {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.events {
+  margin: -22px 0 30px;
+}
+
+.events div {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 0;
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}
+
+.events div:first-child {
+  color: var(--good);
+  border-left-color: var(--good);
+}
+
+.search-row.dropping input {
+  border-color: var(--accent);
+  box-shadow: 4px 4px 0 var(--accent);
+}
+
+.querychip {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.querychip.visible {
+  display: flex;
+}
+
+.querychip img {
+  height: 44px;
+  border: 2px solid var(--ink);
+}
+
+.querychip span {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.querychip button {
+  font: inherit;
+  font-size: 10px;
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.empty {
+  text-align: center;
+  padding: 90px 20px;
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-size: 20px;
+  color: var(--muted);
+}
+
+.empty .hint {
+  font-family: "JetBrains Mono", monospace;
+  font-style: normal;
+  font-size: 12px;
+  margin-top: 10px;
+}
+
+.lat {
+  color: var(--good);
+}
