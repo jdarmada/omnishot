@@ -1,5 +1,5 @@
 # Core
-elasticsearch>=9.0.0
+elasticsearch>=9.4.1
 requests>=2.32.0
 python-dotenv>=1.2.2
 tqdm>=4.66.0
