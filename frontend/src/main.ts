@@ -1,5 +1,6 @@
 import "./style.css";
 import {
+  fetchRecent,
   fetchStatus,
   pickAndSetLibrary,
   revealClip,
@@ -22,14 +23,27 @@ const imageFileInput = $<HTMLInputElement>("image-file");
 const changeFolderBtn = $<HTMLButtonElement>("change-folder");
 const libPath = $("lib-path");
 const grid = $("grid");
+const gridHeader = $("grid-header");
 const empty = $("empty");
 const eventsEl = $("events");
+const logToggle = $<HTMLButtonElement>("log-toggle");
+const progressEl = $("progress");
+const pLabel = $("p-label");
+const pCount = $("p-count");
+const pFill = $("p-fill");
 const queryChip = $("querychip");
 const qImg = $<HTMLImageElement>("qimg");
 const searchRow = $("searchrow");
 const latEl = $("s-lat");
 
 let imageB64: string | null = null;
+let mode: "recent" | "search" = "recent";
+let lastChunks = -1;
+let logOpen = false;
+
+const EMPTY_DEFAULT = "Link a folder of footage to get started.";
+const EMPTY_DEFAULT_HINT =
+  "Use Change folder… or drop videos into the library path above, then describe the shot you need.";
 
 function shortenPath(path: string): string {
   const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
@@ -46,23 +60,25 @@ function tc(sec: number): string {
 function setEmptyMessage(title: string, hint?: string): void {
   empty.style.display = "block";
   grid.innerHTML = "";
+  gridHeader.hidden = true;
   const titleEl = empty.firstElementChild;
   if (titleEl) titleEl.textContent = title;
   const hintEl = empty.querySelector(".hint");
   if (hintEl && hint) hintEl.textContent = hint;
 }
 
-function render(hits: Hit[]): void {
+function render(hits: Hit[], emptyMessage = "No matches. Try different words."): void {
   if (!hits.length) {
-    setEmptyMessage("No matches. Try different words.");
+    setEmptyMessage(emptyMessage, mode === "recent" ? EMPTY_DEFAULT_HINT : undefined);
     return;
   }
   empty.style.display = "none";
+  gridHeader.hidden = mode !== "recent";
   grid.innerHTML = hits
     .map(
       (h, i) => `
     <div class="clip">
-      <div class="rank ${i === 0 ? "top" : ""}">#${i + 1}</div>
+      <div class="rank ${i === 0 && mode === "search" ? "top" : ""}">${mode === "search" ? `#${i + 1}` : "new"}</div>
       <video src="/api/clip/${encodeURIComponent(h.chunk_id)}" muted loop playsinline preload="metadata"></video>
       <div class="meta">
         <span>
@@ -98,6 +114,32 @@ function render(hits: Hit[]): void {
   });
 }
 
+async function loadRecent(): Promise<void> {
+  try {
+    const data = await fetchRecent(9);
+    mode = "recent";
+    latEl.textContent = "";
+    render(data.hits, EMPTY_DEFAULT);
+  } catch {
+    // backend not ready yet; poll will retry on the next chunk-count change
+  }
+}
+
+function updateProgress(
+  state: string,
+  current: string | null,
+  done: number,
+  total: number
+): void {
+  const processing = state === "processing" && total > 0;
+  progressEl.hidden = !processing;
+  if (!processing) return;
+  pLabel.textContent = `indexing ${current ?? "…"}`;
+  pCount.textContent = `${Math.min(done + 1, total)} of ${total}`;
+  const pct = Math.min(((done + 0.5) / total) * 100, 98);
+  pFill.style.width = `${pct.toFixed(1)}%`;
+}
+
 async function poll(): Promise<void> {
   try {
     const s = await fetchStatus();
@@ -107,13 +149,20 @@ async function poll(): Promise<void> {
     $("s-chunks").textContent = String(s.chunks);
     $("s-state").innerHTML =
       s.state === "processing"
-        ? `<span class="busy">⚙ indexing ${s.current}…</span>`
+        ? `<span class="busy">⚙ indexing</span>`
         : s.state === "switching"
           ? `<span class="busy">switching library…</span>`
           : `<span>● ${s.state}</span>`;
+    updateProgress(s.state, s.current, s.queue_done, s.queue_total);
     eventsEl.innerHTML = (s.events || [])
       .map((e) => `<div>${e.t} · ${e.msg}</div>`)
       .join("");
+
+    // Refresh the landing grid when new footage finishes indexing.
+    if (mode === "recent" && s.chunks !== lastChunks) {
+      lastChunks = s.chunks;
+      void loadRecent();
+    }
   } catch {
     $("s-state").textContent = "backend offline";
   }
@@ -126,9 +175,11 @@ async function changeFolder(): Promise<void> {
     const res = await pickAndSetLibrary();
     libPath.textContent = shortenPath(res.watch_dir);
     libPath.title = res.watch_dir;
+    mode = "recent";
+    lastChunks = -1;
     setEmptyMessage(
       "Indexing your library…",
-      "Videos in this folder will appear in search as they finish embedding."
+      "Videos in this folder will appear here as they finish embedding."
     );
     await poll();
   } catch (e) {
@@ -148,11 +199,15 @@ async function find(): Promise<void> {
     return;
   }
   const query = qInput.value.trim();
-  if (!query) return;
+  if (!query) {
+    await loadRecent();
+    return;
+  }
   goBtn.disabled = true;
   goBtn.textContent = "…";
   try {
     const data = await searchText(query);
+    mode = "search";
     latEl.innerHTML = `<span class="lat">embed ${data.embed_ms.toFixed(0)}ms · search ${data.search_ms.toFixed(1)}ms</span>`;
     render(data.hits);
   } catch (e) {
@@ -169,6 +224,7 @@ async function findByImage(): Promise<void> {
   goBtn.textContent = "…";
   try {
     const data = await searchImage(imageB64);
+    mode = "search";
     latEl.innerHTML = `<span class="lat">image query · embed ${data.embed_ms.toFixed(0)}ms · search ${data.search_ms.toFixed(1)}ms</span>`;
     render(data.hits);
   } catch (e) {
@@ -207,6 +263,7 @@ async function similar(chunkId: string): Promise<void> {
   qInput.value = "";
   try {
     const data = await searchSimilar(chunkId);
+    mode = "search";
     latEl.innerHTML = `<span class="lat">similar via stored vector · search ${data.search_ms.toFixed(1)}ms · no embedding call</span>`;
     render(data.hits);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -255,6 +312,13 @@ imageFileInput.addEventListener("change", () => {
   if (file) loadImageFile(file);
 });
 
+logToggle.addEventListener("click", () => {
+  logOpen = !logOpen;
+  eventsEl.hidden = !logOpen;
+  logToggle.classList.toggle("open", logOpen);
+  logToggle.textContent = logOpen ? "log ▴" : "log ▾";
+});
+
 $("clear-image").addEventListener("click", clearImage);
 changeFolderBtn.addEventListener("click", () => void changeFolder());
 goBtn.addEventListener("click", () => void find());
@@ -263,4 +327,5 @@ qInput.addEventListener("keydown", (e) => {
 });
 
 void poll();
+void loadRecent();
 setInterval(() => void poll(), 3000);

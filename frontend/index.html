@@ -59,9 +59,22 @@
         <span>chunks <strong id="s-chunks">0</strong></span>
         <span id="s-state"></span>
         <span id="s-lat"></span>
+        <button type="button" class="log-toggle" id="log-toggle">log ▾</button>
       </div>
-      <div class="events" id="events"></div>
 
+      <div class="progress" id="progress" hidden>
+        <div class="progress-head">
+          <span class="progress-label" id="p-label">indexing…</span>
+          <span class="progress-count" id="p-count"></span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="p-fill"></div>
+        </div>
+      </div>
+
+      <div class="events" id="events" hidden></div>
+
+      <div class="grid-header" id="grid-header" hidden>Latest additions</div>
       <div class="grid" id="grid"></div>
       <div class="empty" id="empty">
         <div>Link a folder of footage to get started.</div>

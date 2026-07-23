@@ -92,7 +92,14 @@ _lib_lock = threading.Lock()
 _watch_dir = DEFAULT_LIBRARY
 _library_generation = 0  # bumped when library path changes → watcher resets
 
-status = {"clips": 0, "chunks": 0, "state": "starting", "current": None}
+status = {
+    "clips": 0,
+    "chunks": 0,
+    "state": "starting",
+    "current": None,
+    "queue_done": 0,
+    "queue_total": 0,
+}
 events: list[dict] = []
 
 
@@ -299,6 +306,8 @@ def watcher() -> None:
             for name in [n for n in manifest if n not in on_disk]:
                 _remove_clip(name, manifest)
 
+            # Collect the full queue first so progress totals are known.
+            to_ingest: list[tuple[str, Path]] = []
             for name, p in on_disk.items():
                 known = manifest.get(name)
                 if known and known["key"] == _clip_key(p):
@@ -308,13 +317,17 @@ def watcher() -> None:
                     pending_sizes[name] = size
                     continue
                 del pending_sizes[name]
-                if known:
+                to_ingest.append((name, p))
+
+            for i, (name, p) in enumerate(to_ingest):
+                if name in manifest:
                     _remove_clip(name, manifest)
+                status.update(queue_done=i, queue_total=len(to_ingest))
                 _ingest_clip(p, watch_dir, manifest)
+                _refresh_status(manifest)
 
             _refresh_status(manifest)
-            if status.get("state") != "processing":
-                status.update(state="watching", current=None)
+            status.update(state="watching", current=None, queue_done=0, queue_total=0)
         except Exception as e:
             logger.error("watcher error: %s", e)
             status.update(state=f"error: {e}", current=None)
@@ -354,6 +367,37 @@ async def api_status():
         "watch_dir": watch,
         "events": list(reversed(events)),
     }
+
+
+@app.get("/api/recent")
+async def recent(k: int = 9):
+    """Most recently indexed clips (manifest preserves ingest order)."""
+    manifest = _load_manifest()
+    entries = [e for e in manifest.values() if e.get("chunk_ids")]
+    entries = entries[-k:][::-1]
+    ids = [e["chunk_ids"][0] for e in entries]
+    if not ids:
+        return {"hits": []}
+    try:
+        res = es.mget(index=INDEX, ids=ids, source_excludes=["embedding"])
+    except Exception as e:
+        raise HTTPException(500, f"Recent lookup failed: {e}") from e
+    hits = []
+    for doc in res["docs"]:
+        if not doc.get("found"):
+            continue
+        src = doc["_source"]
+        hits.append(
+            {
+                "chunk_id": src["chunk_id"],
+                "clip_id": src["clip_id"],
+                "score": 0.0,
+                "duration": src["duration"],
+                "start_sec": src["start_sec"],
+                "end_sec": src["end_sec"],
+            }
+        )
+    return {"hits": hits}
 
 
 @app.get("/api/pick-folder")

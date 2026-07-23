@@ -18,6 +18,8 @@ export interface StatusResponse {
   chunks: number;
   state: string;
   current: string | null;
+  queue_done: number;
+  queue_total: number;
   watch_dir: string;
   events: { t: string; msg: string }[];
 }
@@ -39,6 +41,12 @@ async function parseError(r: Response): Promise<string> {
 
 export async function fetchStatus(): Promise<StatusResponse> {
   const r = await fetch("/api/status");
+  if (!r.ok) throw new Error(await parseError(r));
+  return r.json();
+}
+
+export async function fetchRecent(k = 9): Promise<SearchResponse> {
+  const r = await fetch(`/api/recent?k=${k}`);
   if (!r.ok) throw new Error(await parseError(r));
   return r.json();
 }
