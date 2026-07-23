@@ -5,6 +5,7 @@ export interface Hit {
   duration: number;
   start_sec: number;
   end_sec: number;
+  uploaded_at?: string | null;
 }
 
 export interface SearchResponse {

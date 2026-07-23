@@ -57,6 +57,24 @@ function tc(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+const MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+// uploaded_at is "YYYY-MM-DD"; parse manually so timezones can't shift the day
+function fmtDate(iso?: string | null): string {
+  if (!iso) return "new";
+  const [, m, d] = iso.split("-").map(Number);
+  if (!m || !d) return "new";
+  return `${MONTHS[m - 1]} ${d}`;
+}
+
+function pushUrl(url: string): void {
+  const current = location.pathname + location.search;
+  if (current !== url) history.pushState(null, "", url);
+}
+
 function setEmptyMessage(title: string, hint?: string): void {
   empty.style.display = "block";
   grid.innerHTML = "";
@@ -78,7 +96,7 @@ function render(hits: Hit[], emptyMessage = "No matches. Try different words."):
     .map(
       (h, i) => `
     <div class="clip">
-      <div class="rank ${i === 0 && mode === "search" ? "top" : ""}">${mode === "search" ? `#${i + 1}` : "new"}</div>
+      <div class="rank ${i === 0 && mode === "search" ? "top" : ""}">${mode === "search" ? `#${i + 1}` : fmtDate(h.uploaded_at)}</div>
       <video src="/api/clip/${encodeURIComponent(h.chunk_id)}" muted loop playsinline preload="metadata"></video>
       <div class="meta">
         <span>
@@ -193,16 +211,14 @@ async function changeFolder(): Promise<void> {
   }
 }
 
-async function find(): Promise<void> {
-  if (imageB64) {
-    await findByImage();
-    return;
-  }
-  const query = qInput.value.trim();
-  if (!query) {
-    await loadRecent();
-    return;
-  }
+async function goHome(push = true): Promise<void> {
+  clearImage();
+  qInput.value = "";
+  if (push) pushUrl(location.pathname);
+  await loadRecent();
+}
+
+async function runTextSearch(query: string, push = true): Promise<void> {
   goBtn.disabled = true;
   goBtn.textContent = "…";
   try {
@@ -210,12 +226,26 @@ async function find(): Promise<void> {
     mode = "search";
     latEl.innerHTML = `<span class="lat">embed ${data.embed_ms.toFixed(0)}ms · search ${data.search_ms.toFixed(1)}ms</span>`;
     render(data.hits);
+    if (push) pushUrl(`${location.pathname}?q=${encodeURIComponent(query)}`);
   } catch (e) {
     setEmptyMessage(`Search failed: ${(e as Error).message}`);
   } finally {
     goBtn.disabled = false;
     goBtn.textContent = "Find";
   }
+}
+
+async function find(): Promise<void> {
+  if (imageB64) {
+    await findByImage();
+    return;
+  }
+  const query = qInput.value.trim();
+  if (!query) {
+    await goHome();
+    return;
+  }
+  await runTextSearch(query);
 }
 
 async function findByImage(): Promise<void> {
@@ -227,6 +257,8 @@ async function findByImage(): Promise<void> {
     mode = "search";
     latEl.innerHTML = `<span class="lat">image query · embed ${data.embed_ms.toFixed(0)}ms · search ${data.search_ms.toFixed(1)}ms</span>`;
     render(data.hits);
+    // Image queries can't be encoded in the URL; just clear stale params.
+    history.replaceState(null, "", location.pathname);
   } catch (e) {
     alert(`Image search failed: ${(e as Error).message}`);
   } finally {
@@ -258,7 +290,7 @@ function loadImageFile(file: File): void {
   reader.readAsDataURL(file);
 }
 
-async function similar(chunkId: string): Promise<void> {
+async function similar(chunkId: string, push = true): Promise<void> {
   clearImage();
   qInput.value = "";
   try {
@@ -266,9 +298,25 @@ async function similar(chunkId: string): Promise<void> {
     mode = "search";
     latEl.innerHTML = `<span class="lat">similar via stored vector · search ${data.search_ms.toFixed(1)}ms · no embedding call</span>`;
     render(data.hits);
+    if (push) pushUrl(`${location.pathname}?similar=${encodeURIComponent(chunkId)}`);
     window.scrollTo({ top: 0, behavior: "smooth" });
   } catch (e) {
     alert(`Similar search failed: ${(e as Error).message}`);
+  }
+}
+
+// Restore the view described by the current URL (initial load + back/forward).
+async function dispatchFromLocation(): Promise<void> {
+  const params = new URLSearchParams(location.search);
+  const q = params.get("q");
+  const sim = params.get("similar");
+  if (q) {
+    qInput.value = q;
+    await runTextSearch(q, false);
+  } else if (sim) {
+    await similar(sim, false);
+  } else {
+    await goHome(false);
   }
 }
 
@@ -320,12 +368,14 @@ logToggle.addEventListener("click", () => {
 });
 
 $("clear-image").addEventListener("click", clearImage);
+$("logo").addEventListener("click", () => void goHome());
 changeFolderBtn.addEventListener("click", () => void changeFolder());
 goBtn.addEventListener("click", () => void find());
 qInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") void find();
 });
+window.addEventListener("popstate", () => void dispatchFromLocation());
 
 void poll();
-void loadRecent();
+void dispatchFromLocation();
 setInterval(() => void poll(), 3000);

@@ -41,6 +41,7 @@ def _doc(clip: str) -> dict:
         "duration": 2.0,
         "start_sec": 0.0,
         "end_sec": 2.0,
+        "uploaded_at": "2026-07-23",
     }
 
 
@@ -68,6 +69,7 @@ def test_recent_returns_newest_first(monkeypatch):
     assert r.status_code == 200
     hits = r.json()["hits"]
     assert [h["clip_id"] for h in hits] == ["new", "mid"]
+    assert all(h["uploaded_at"] == "2026-07-23" for h in hits)
 
 
 def test_recent_skips_missing_docs(monkeypatch):

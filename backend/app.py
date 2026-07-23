@@ -395,6 +395,7 @@ async def recent(k: int = 9):
                 "duration": src["duration"],
                 "start_sec": src["start_sec"],
                 "end_sec": src["end_sec"],
+                "uploaded_at": src.get("uploaded_at"),
             }
         )
     return {"hits": hits}
