@@ -4,11 +4,14 @@ Elasticsearch helpers for the demo index (float32 HNSW, 1024-d cosine).
 
 from __future__ import annotations
 
+import logging
 import os
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
-from typing import Iterable, Optional
 
 from elasticsearch import Elasticsearch, helpers
+
+logger = logging.getLogger("omnishot")
 
 
 @dataclass
@@ -23,16 +26,22 @@ class ChunkDoc:
     uploaded_at: str
     uploader: str
     tags: list
-    transcript: Optional[str]
+    transcript: str | None
     embedding: list
 
 
 def es_client() -> Elasticsearch:
+    url = os.environ.get("ES_URL")
+    if not url:
+        raise RuntimeError(
+            "ES_URL is not set. Copy .env.example to .env and set ES_URL "
+            "(http://localhost:9200 for local Docker Elasticsearch)."
+        )
     kwargs: dict = {"request_timeout": 120}
     api_key = os.environ.get("ES_API_KEY")
     if api_key:
         kwargs["api_key"] = api_key
-    return Elasticsearch(os.environ["ES_URL"], **kwargs)
+    return Elasticsearch(url, **kwargs)
 
 
 def create_index(
@@ -66,7 +75,7 @@ def create_index(
         }
     }
     es.indices.create(index=name, mappings=mappings)
-    print(f"Created index '{name}' ({dims}-d cosine hnsw)")
+    logger.info("Created index '%s' (%d-d cosine hnsw)", name, dims)
 
 
 def bulk_index(es: Elasticsearch, name: str, docs: Iterable[ChunkDoc]) -> int:
@@ -75,9 +84,9 @@ def bulk_index(es: Elasticsearch, name: str, docs: Iterable[ChunkDoc]) -> int:
     )
     success, errors = helpers.bulk(es, actions, raise_on_error=False)
     if errors:
-        print(f"⚠ {len(errors)} bulk indexing errors")
+        logger.warning("%d bulk indexing errors", len(errors))
         for e in errors[:3]:
-            print(f"  {e}")
+            logger.warning("  %s", e)
     return success
 
 

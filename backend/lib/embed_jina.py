@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from typing import Literal
 
 import requests
 
@@ -33,7 +34,10 @@ class JinaClient:
     def __init__(self, api_key: str | None = None, timeout: int = 60):
         self.api_key = api_key or os.environ.get("JINA_API_KEY")
         if not self.api_key:
-            raise RuntimeError("Set JINA_API_KEY env var or pass api_key.")
+            raise RuntimeError(
+                "JINA_API_KEY is not set. Copy .env.example to .env and add "
+                "your key (free tier at https://jina.ai)."
+            )
         self.timeout = timeout
         self.session = requests.Session()
         self.session.headers.update(

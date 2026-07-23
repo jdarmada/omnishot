@@ -15,12 +15,14 @@ Env:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
 import subprocess
 import sys
 import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -46,6 +48,11 @@ from lib.video_proxy import make_video_input  # noqa: E402
 
 load_dotenv(ROOT / ".env")
 
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s"
+)
+logger = logging.getLogger("omnishot")
+
 CHUNKS_DIR = Path(os.environ.get("CHUNKS_DIR", "./chunks")).resolve()
 INDEX = os.environ.get("BROLL_INDEX", "broll-demo")
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
@@ -55,7 +62,16 @@ SCAN_EVERY = 4.0
 FRONTEND_DIST = ROOT / "frontend" / "dist"
 DEFAULT_LIBRARY = Path(os.environ.get("WATCH_DIR", "./clips")).resolve()
 
-app = FastAPI(title="omnishot-ts")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # OMNISHOT_DISABLE_WATCHER=1 lets tests import and exercise the API
+    # without a live Elasticsearch or background ingest.
+    if os.environ.get("OMNISHOT_DISABLE_WATCHER") != "1":
+        threading.Thread(target=watcher, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="omnishot-ts", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -138,7 +154,7 @@ def _clear_corpus(manifest: dict) -> None:
                 conflicts="proceed",
             )
     except Exception as e:
-        print(f"  ⚠ index clear: {e}")
+        logger.warning("index clear: %s", e)
 
 
 def _ingest_clip(clip: Path, watch_dir: Path, manifest: dict) -> None:
@@ -150,7 +166,7 @@ def _ingest_clip(clip: Path, watch_dir: Path, manifest: dict) -> None:
             inp = make_video_input(c.path)
             [vec] = jina.embed([inp], task="retrieval.passage", config=_cfg)
         except Exception as e:
-            print(f"  ⚠ embed failed for {c.chunk_id}: {e}")
+            logger.warning("embed failed for %s: %s", c.chunk_id, e)
             continue
         docs.append(
             ChunkDoc(
@@ -180,7 +196,7 @@ def _ingest_clip(clip: Path, watch_dir: Path, manifest: dict) -> None:
     }
     _save_manifest(manifest)
     log_event(f"{key} → {len(docs)} scenes indexed, searchable")
-    print(f"  ✓ {key}: {len(docs)} chunks indexed")
+    logger.info("%s: %d chunks indexed", key, len(docs))
 
 
 def _remove_clip(name: str, manifest: dict, quiet: bool = False) -> None:
@@ -202,7 +218,7 @@ def _remove_clip(name: str, manifest: dict, quiet: bool = False) -> None:
     _save_manifest(manifest)
     if not quiet:
         log_event(f"{name} removed from the index")
-        print(f"  ✗ {name}: removed from index")
+        logger.info("%s: removed from index", name)
 
 
 def _refresh_status(manifest: dict) -> None:
@@ -230,13 +246,21 @@ def set_library(path: Path, *, clear: bool = True) -> Path:
         _save_library_path(path)
         status.update(clips=0, chunks=0, state="switching", current=None)
         log_event(f"library → {path}")
-        print(f"  ↪ library changed: {old} → {path}")
+        logger.info("library changed: %s → %s", old, path)
         return _watch_dir
 
 
 def watcher() -> None:
     global _watch_dir
-    create_index(es, INDEX, dims=1024)
+    # Wait for Elasticsearch rather than dying if it isn't up yet.
+    while True:
+        try:
+            create_index(es, INDEX, dims=1024)
+            break
+        except Exception as e:
+            status.update(state="waiting for elasticsearch", current=None)
+            logger.warning("elasticsearch not ready (%s); retrying in 5s", e)
+            time.sleep(5)
     with _lib_lock:
         _watch_dir = _load_library_path()
         if _watch_dir == DEFAULT_LIBRARY:
@@ -292,12 +316,9 @@ def watcher() -> None:
             if status.get("state") != "processing":
                 status.update(state="watching", current=None)
         except Exception as e:
-            print(f"watcher error: {e}")
+            logger.error("watcher error: %s", e)
             status.update(state=f"error: {e}", current=None)
         time.sleep(SCAN_EVERY)
-
-
-threading.Thread(target=watcher, daemon=True).start()
 
 
 class SearchRequest(BaseModel):
@@ -312,6 +333,16 @@ class ImageSearchRequest(BaseModel):
 
 class LibraryRequest(BaseModel):
     path: str
+
+
+@app.get("/api/health")
+async def health():
+    es_ok = False
+    try:
+        es_ok = bool(es.ping())
+    except Exception:
+        pass
+    return {"status": "ok", "elasticsearch": es_ok, "index": INDEX}
 
 
 @app.get("/api/status")
@@ -470,7 +501,10 @@ async def search(req: SearchRequest):
 @app.get("/api/clip/{chunk_id}")
 async def get_clip(chunk_id: str):
     res = es.get(index=INDEX, id=chunk_id, _source=["path"])
-    path = Path(res["_source"]["path"])
+    path = Path(res["_source"]["path"]).resolve()
+    # Serve only app-owned chunk files, even if the index is tampered with.
+    if CHUNKS_DIR not in path.parents:
+        raise HTTPException(403, "chunk path outside chunks directory")
     if not path.exists():
         raise HTTPException(404, "chunk file missing")
     return FileResponse(path, media_type="video/mp4")
