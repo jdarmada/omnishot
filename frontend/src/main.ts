@@ -36,6 +36,10 @@ const queryChip = $("querychip");
 const qImg = $<HTMLImageElement>("qimg");
 const searchRow = $("searchrow");
 const latEl = $("s-lat");
+const playerModal = $("player-modal");
+const playerVideo = $<HTMLVideoElement>("player-video");
+const playerTitle = $("player-title");
+const playerTimecode = $("player-timecode");
 
 let imageB64: string | null = null;
 let mode: "recent" | "search" = "recent";
@@ -77,6 +81,33 @@ function pushUrl(url: string): void {
   if (current !== url) history.pushState(null, "", url);
 }
 
+function openPlayer(h: Pick<Hit, "chunk_id" | "clip_id" | "start_sec" | "end_sec" | "duration">): void {
+  playerTitle.textContent = h.clip_id;
+  playerTimecode.innerHTML = `<b>${tc(h.start_sec)}–${tc(h.end_sec)}</b> in source · ${h.duration.toFixed(1)}s`;
+  playerVideo.src = `/api/clip/${encodeURIComponent(h.chunk_id)}`;
+  playerModal.hidden = false;
+}
+
+function closePlayer(): void {
+  playerModal.hidden = true;
+  playerVideo.pause();
+  playerVideo.removeAttribute("src");
+  playerVideo.load();
+}
+
+function wirePreviewVideos(root: HTMLElement, hitsById: Map<string, Hit>): void {
+  root.querySelectorAll<HTMLVideoElement>("video").forEach((video) => {
+    video.addEventListener("mouseenter", () => void video.play());
+    video.addEventListener("mouseleave", () => video.pause());
+    video.addEventListener("click", () => {
+      video.pause();
+      const id = video.dataset.chunk;
+      const hit = id ? hitsById.get(id) : undefined;
+      if (hit) openPlayer(hit);
+    });
+  });
+}
+
 function setEmptyMessage(title: string, hint?: string): void {
   empty.style.display = "block";
   grid.innerHTML = "";
@@ -99,7 +130,7 @@ function render(hits: Hit[], emptyMessage = "No matches. Try different words."):
       (h, i) => `
     <div class="clip">
       <div class="rank ${i === 0 && mode === "search" ? "top" : ""}">${mode === "search" ? `#${i + 1}` : uploadedBadge(h.uploaded_at)}</div>
-      <video src="/api/clip/${encodeURIComponent(h.chunk_id)}" muted loop playsinline preload="metadata"></video>
+      <video src="/api/clip/${encodeURIComponent(h.chunk_id)}" data-chunk="${h.chunk_id}" muted loop playsinline preload="metadata" title="Click to enlarge"></video>
       <div class="meta">
         <span>
           <span class="id" title="${h.clip_id}">${h.clip_id}</span><br>
@@ -120,10 +151,7 @@ function render(hits: Hit[], emptyMessage = "No matches. Try different words."):
     )
     .join("");
 
-  grid.querySelectorAll<HTMLVideoElement>("video").forEach((video) => {
-    video.addEventListener("mouseenter", () => void video.play());
-    video.addEventListener("mouseleave", () => video.pause());
-  });
+  wirePreviewVideos(grid, new Map(hits.map((h) => [h.chunk_id, h])));
 
   grid.querySelectorAll<HTMLButtonElement>("[data-expand-clip]").forEach((btn) => {
     btn.addEventListener("click", () => void toggleScenes(btn));
@@ -358,16 +386,13 @@ async function toggleScenes(btn: HTMLButtonElement): Promise<void> {
             .map(
               (s) => `
         <div class="scene">
-          <video src="/api/clip/${encodeURIComponent(s.chunk_id)}" muted loop playsinline preload="metadata"></video>
+          <video src="/api/clip/${encodeURIComponent(s.chunk_id)}" data-chunk="${s.chunk_id}" muted loop playsinline preload="metadata" title="Click to enlarge"></video>
           <span class="timecode"><b>${tc(s.start_sec)}–${tc(s.end_sec)}</b> · ${s.duration.toFixed(1)}s</span>
         </div>`
             )
             .join("")
         : `<div class="scene-empty">No other matching scenes.</div>`;
-      scenes.querySelectorAll<HTMLVideoElement>("video").forEach((video) => {
-        video.addEventListener("mouseenter", () => void video.play());
-        video.addEventListener("mouseleave", () => video.pause());
-      });
+      wirePreviewVideos(scenes, new Map(data.hits.map((s) => [s.chunk_id, s])));
       scenes.dataset.loaded = "1";
     } catch (e) {
       alert(`Could not expand: ${(e as Error).message}`);
@@ -425,6 +450,14 @@ logToggle.addEventListener("click", () => {
   eventsEl.hidden = !logOpen;
   logToggle.classList.toggle("open", logOpen);
   logToggle.textContent = logOpen ? "log ▴" : "log ▾";
+});
+
+$("player-close").addEventListener("click", closePlayer);
+playerModal.addEventListener("click", (e) => {
+  if (e.target === playerModal) closePlayer();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !playerModal.hidden) closePlayer();
 });
 
 $("clear-image").addEventListener("click", clearImage);

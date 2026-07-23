@@ -483,3 +483,69 @@ button.image:disabled {
 .lat {
   color: var(--good);
 }
+
+.clip video,
+.scene video {
+  cursor: zoom-in;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(20, 20, 18, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+
+.modal[hidden] {
+  display: none;
+}
+
+.modal-inner {
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.45);
+  max-width: min(1100px, 92vw);
+  width: 100%;
+}
+
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.modal-title {
+  font-weight: 700;
+  margin-right: 10px;
+}
+
+.modal-close {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 2px 9px;
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.modal-inner video {
+  display: block;
+  width: 100%;
+  max-height: 76vh;
+  background: #111;
+}

@@ -84,6 +84,18 @@
         </div>
       </div>
     </div>
+    <div class="modal" id="player-modal" hidden>
+      <div class="modal-inner">
+        <div class="modal-head">
+          <span>
+            <span class="modal-title" id="player-title"></span>
+            <span class="timecode" id="player-timecode"></span>
+          </span>
+          <button type="button" class="modal-close" id="player-close">✕</button>
+        </div>
+        <video id="player-video" controls autoplay playsinline></video>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
