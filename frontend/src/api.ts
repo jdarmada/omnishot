@@ -22,6 +22,12 @@ export interface StatusResponse {
   events: { t: string; msg: string }[];
 }
 
+export interface LibraryResponse {
+  watch_dir: string;
+  cleared?: boolean;
+  path?: string;
+}
+
 async function parseError(r: Response): Promise<string> {
   try {
     const body = await r.json();
@@ -33,6 +39,22 @@ async function parseError(r: Response): Promise<string> {
 
 export async function fetchStatus(): Promise<StatusResponse> {
   const r = await fetch("/api/status");
+  if (!r.ok) throw new Error(await parseError(r));
+  return r.json();
+}
+
+export async function pickAndSetLibrary(): Promise<LibraryResponse> {
+  const r = await fetch("/api/library/pick", { method: "POST" });
+  if (!r.ok) throw new Error(await parseError(r));
+  return r.json();
+}
+
+export async function setLibrary(path: string): Promise<LibraryResponse> {
+  const r = await fetch("/api/library", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
   if (!r.ok) throw new Error(await parseError(r));
   return r.json();
 }

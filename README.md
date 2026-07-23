@@ -1,6 +1,6 @@
 # omnishot-ts
 
-Standalone multimodal b-roll search: drop videos in a folder, search by text or image, jump to the source clip in your file manager.
+Standalone multimodal b-roll search: link any folder of footage, search by text or image, jump to the source clip in your file manager.
 
 Python FastAPI backend + TypeScript (Vite) frontend. Embeddings via **Jina v5-omni-small**; kNN via **Elasticsearch HNSW**.
 
@@ -9,7 +9,7 @@ This is the editor-facing demo extracted from the [omnishot](https://github.com/
 ```
 omnishot-ts/
 ├── backend/
-│   ├── app.py              # FastAPI: folder watch + search APIs
+│   ├── app.py              # FastAPI: library watch + search APIs
 │   ├── requirements.txt
 │   └── lib/                # chunk → embed → index helpers
 ├── frontend/               # Vite + TypeScript UI
@@ -20,6 +20,14 @@ omnishot-ts/
 ├── docker-compose.yml      # local Elasticsearch 9.x
 └── .env.example
 ```
+
+**Layout of data**
+
+| What | Where | Who owns it |
+|---|---|---|
+| Source videos (your library) | Any folder you link | You — add/delete in Finder |
+| Scene chunks + embeddings | `./chunks` + Elasticsearch | App (derived; safe to wipe) |
+| Default starter folder | `./clips` | Convenience default until you change it |
 
 ---
 
@@ -43,7 +51,7 @@ omnishot-ts/
 ## Setup
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/jdarmada/omnishot-ts
 cd omnishot-ts
 
 # Python
@@ -65,9 +73,11 @@ cp .env.example .env
 | `ES_URL` | Yes | `http://localhost:9200` or your cloud URL |
 | `ES_API_KEY` | No | Needed for secured / cloud clusters |
 | `PEXELS_API_KEY` | No | Only for `download_pexels.py` |
-| `WATCH_DIR` | No | Folder the app watches (default `./clips`) |
+| `WATCH_DIR` | No | Initial library folder (default `./clips`) |
 | `CHUNKS_DIR` | No | Scene chunk output (default `./chunks`) |
 | `BROLL_INDEX` | No | ES index name (default `broll-demo`) |
+
+The linked library path is also persisted in `chunks/.library.json` after you change it in the UI.
 
 ---
 
@@ -98,14 +108,29 @@ cd frontend && npm run dev
 
 Open **http://localhost:5173**.
 
-The Vite dev server proxies `/api` to the backend. Drop `.mp4` / `.mov` / `.mkv` / `.webm` files into `./clips` — within a few seconds they are scene-chunked, embedded, and searchable.
+### Link a library folder
+
+1. Click **Change folder…** — a native OS dialog opens on the machine running the backend
+2. Pick any folder of `.mp4` / `.mov` / `.mkv` / `.webm` footage
+3. The app indexes that folder (and subfolders). Switching folders clears the previous search corpus and rebuilds from the new path
+
+**Add clips:** copy or save videos into the linked folder.  
+**Remove from search:** move or delete the file in the file manager — the watcher drops it from Elasticsearch within a few seconds.
+
+You can also set the path via API without the dialog:
+
+```bash
+curl -X POST http://localhost:8001/api/library \
+  -H 'Content-Type: application/json' \
+  -d '{"path":"/Users/you/Movies/B-roll"}'
+```
 
 ### What you can do in the UI
 
 - **Text search** — describe the shot visually
 - **Image search** — drag a reference image onto the search bar
 - **≈ More** — find visually similar clips (reuses the stored vector, no Jina call)
-- **Reveal** — open the source file in Finder / Explorer / file manager
+- **Reveal** — open the source file in Finder / Explorer / file manager (the original in your library)
 
 ### Production-style (single port)
 
@@ -120,68 +145,48 @@ Then open **http://localhost:8001** (backend serves `frontend/dist`).
 
 ## Download videos
 
-Downloads land under `./clips/<category>/`. The live app watches `./clips` recursively via name, and batch ingest walks the tree — either path works.
+Point downloads at your library folder (or at `./clips`, then **Change folder…** to that path).
 
 ### Option A: Pexels (short stock clips)
 
 Needs `PEXELS_API_KEY` in `.env`.
 
 ```bash
-# ~50 clips across 6 categories (default)
 python scripts/download_pexels.py --out ./clips --total 50
-
-# Specific categories
-python scripts/download_pexels.py --out ./clips --total 30 --categories nature urban animals
+python scripts/download_pexels.py --out ~/Movies/B-roll --total 30 --categories nature urban
 ```
 
 ### Option B: YouTube (longer clips, more scenes each)
 
-Uses `yt-dlp`; no API key. Clips are filtered to roughly 2–20 minutes.
-
 ```bash
 python scripts/download_youtube.py --out ./clips --total 20
-
-python scripts/download_youtube.py --out ./clips --total 40 --categories nature animals
+python scripts/download_youtube.py --out ~/Movies/B-roll --categories nature animals
 ```
 
-Both scripts checkpoint progress (`.checkpoint.json` / `.yt_checkpoint.json`) so interrupted runs resume cleanly.
-
-If yt-dlp hits 403s, update it: `pip install -U yt-dlp`.
+Both scripts checkpoint progress so interrupted runs resume cleanly. If yt-dlp hits 403s: `pip install -U yt-dlp`.
 
 ---
 
-## Ingest videos
+## Batch ingest (optional preload)
 
-### Path 1 — live folder watch (default)
-
-1. Start the backend
-2. Copy videos into `./clips` (or `WATCH_DIR`)
-3. Watch the status line: clips are indexed automatically
-
-No extra command needed.
-
-### Path 2 — batch ingest (preload)
-
-Useful for a large folder before you open the UI, or to rebuild the index with an embed cache:
+For a large folder before opening the UI:
 
 ```bash
-python scripts/ingest.py --clips ./clips --cache ./chunks/.embed_cache.json
+python scripts/ingest.py --clips ~/Movies/B-roll --cache ./chunks/.embed_cache.json
 ```
 
-This writes the same `broll-demo` index and a `.demo_manifest.json` so the folder watcher will not re-embed those files when the app starts.
-
-Re-runs with `--cache` skip Jina calls for chunks already embedded.
+Then set the same path as the library (UI or `POST /api/library`) so the watcher does not re-embed files already in the manifest.
 
 ---
 
 ## How it works
 
 ```
-clips/  →  scene chunk (PySceneDetect)  →  640px proxy  →  Jina embed
-                                                         →  Elasticsearch kNN
+library folder  →  scene chunk (PySceneDetect)  →  640px proxy  →  Jina embed
+                                                                →  Elasticsearch kNN
 ```
 
-Query text or an image is embedded with `retrieval.query` into the same space as video passages (`retrieval.passage`), then searched with HNSW.
+Membership follows the filesystem: files in the linked folder are searchable; files removed from it leave the corpus. Chunk files under `./chunks` are app-owned derivatives.
 
 ---
 
@@ -192,5 +197,7 @@ Query text or an image is embedded with `retrieval.query` into the same space as
 **`compatible-with` version error** — Install an ES 9.x client: `pip install "elasticsearch>=9.0.0"`.
 
 **Backend offline in the UI** — Confirm uvicorn is on port 8001; Vite proxies `/api` there.
+
+**Change folder… does nothing** — The dialog runs on the **server** host (same machine as uvicorn). On Linux install `zenity` or `kdialog`. Cancelled dialogs are ignored.
 
 **Reveal does nothing on Linux** — Opens the parent folder via `xdg-open` (macOS uses Finder `open -R`, Windows uses Explorer `/select`).

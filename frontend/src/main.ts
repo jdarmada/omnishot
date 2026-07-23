@@ -1,6 +1,7 @@
 import "./style.css";
 import {
   fetchStatus,
+  pickAndSetLibrary,
   revealClip,
   searchImage,
   searchSimilar,
@@ -16,6 +17,8 @@ const $ = <T extends HTMLElement>(id: string) => {
 
 const qInput = $<HTMLInputElement>("q");
 const goBtn = $<HTMLButtonElement>("go");
+const changeFolderBtn = $<HTMLButtonElement>("change-folder");
+const libPath = $("lib-path");
 const grid = $("grid");
 const empty = $("empty");
 const eventsEl = $("events");
@@ -25,6 +28,12 @@ const searchRow = $("searchrow");
 const latEl = $("s-lat");
 
 let imageB64: string | null = null;
+
+function shortenPath(path: string): string {
+  const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
+  if (parts.length <= 3) return path;
+  return `…/${parts.slice(-3).join("/")}`;
+}
 
 function tc(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -90,18 +99,44 @@ function render(hits: Hit[]): void {
 async function poll(): Promise<void> {
   try {
     const s = await fetchStatus();
-    $("s-dir").textContent = s.watch_dir.split("/").slice(-2).join("/");
+    libPath.textContent = shortenPath(s.watch_dir);
+    libPath.title = s.watch_dir;
     $("s-clips").textContent = String(s.clips);
     $("s-chunks").textContent = String(s.chunks);
     $("s-state").innerHTML =
       s.state === "processing"
         ? `<span class="busy">⚙ indexing ${s.current}…</span>`
-        : `<span>● ${s.state}</span>`;
+        : s.state === "switching"
+          ? `<span class="busy">switching library…</span>`
+          : `<span>● ${s.state}</span>`;
     eventsEl.innerHTML = (s.events || [])
       .map((e) => `<div>${e.t} · ${e.msg}</div>`)
       .join("");
   } catch {
     $("s-state").textContent = "backend offline";
+  }
+}
+
+async function changeFolder(): Promise<void> {
+  changeFolderBtn.disabled = true;
+  changeFolderBtn.textContent = "Picking…";
+  try {
+    const res = await pickAndSetLibrary();
+    libPath.textContent = shortenPath(res.watch_dir);
+    libPath.title = res.watch_dir;
+    setEmptyMessage(
+      "Indexing your library…",
+      "Videos in this folder will appear in search as they finish embedding."
+    );
+    await poll();
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (!/no folder selected/i.test(msg)) {
+      alert(`Could not change library: ${msg}`);
+    }
+  } finally {
+    changeFolderBtn.disabled = false;
+    changeFolderBtn.textContent = "Change folder…";
   }
 }
 
@@ -205,6 +240,7 @@ searchRow.addEventListener("drop", (e) => {
 });
 
 $("clear-image").addEventListener("click", clearImage);
+changeFolderBtn.addEventListener("click", () => void changeFolder());
 goBtn.addEventListener("click", () => void find());
 qInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") void find();

@@ -14,6 +14,22 @@
     <div class="wrap">
       <h1>omnishot</h1>
 
+      <div class="library" id="library">
+        <div class="library-row">
+          <div class="library-path">
+            <span class="library-label">Library</span>
+            <strong id="lib-path" title="">…</strong>
+          </div>
+          <button type="button" class="folder" id="change-folder">
+            Change folder…
+          </button>
+        </div>
+        <p class="library-hint">
+          Add videos to this folder to index them. Move or delete a file to remove
+          it from search.
+        </p>
+      </div>
+
       <div class="search-row" id="searchrow">
         <input
           id="q"
@@ -30,7 +46,6 @@
       </div>
 
       <div class="statusline" id="statusline">
-        <span>watching <strong id="s-dir">…</strong></span>
         <span>clips <strong id="s-clips">0</strong></span>
         <span>chunks <strong id="s-chunks">0</strong></span>
         <span id="s-state"></span>
@@ -40,9 +55,10 @@
 
       <div class="grid" id="grid"></div>
       <div class="empty" id="empty">
-        <div>Your footage is searchable now.</div>
+        <div>Link a folder of footage to get started.</div>
         <div class="hint">
-          Drop video files into the watch folder, then describe the shot you need.
+          Use Change folder… or drop videos into the library path above, then
+          describe the shot you need.
         </div>
       </div>
     </div>
