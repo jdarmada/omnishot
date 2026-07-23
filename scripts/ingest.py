@@ -34,7 +34,7 @@ from lib.index_elastic import (  # noqa: E402
 from lib.video_proxy import make_video_input  # noqa: E402
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
-INDEX_DEFAULT = "broll-demo"
+INDEX_DEFAULT = "broll"
 
 
 def discover_clips(root: Path) -> list[Path]:
@@ -59,16 +59,16 @@ def clip_key(p: Path) -> str:
     return f"{p.name}:{st.st_size}:{int(st.st_mtime)}"
 
 
-def load_demo_manifest(chunks_dir: Path) -> dict:
-    p = chunks_dir / ".demo_manifest.json"
+def load_watch_manifest(chunks_dir: Path) -> dict:
+    p = chunks_dir / ".manifest.json"
     if p.exists():
         return json.loads(p.read_text())
     return {}
 
 
-def save_demo_manifest(chunks_dir: Path, manifest: dict) -> None:
+def save_watch_manifest(chunks_dir: Path, manifest: dict) -> None:
     chunks_dir.mkdir(parents=True, exist_ok=True)
-    (chunks_dir / ".demo_manifest.json").write_text(json.dumps(manifest))
+    (chunks_dir / ".manifest.json").write_text(json.dumps(manifest))
 
 
 def main() -> None:
@@ -94,7 +94,7 @@ def main() -> None:
     cfg = EmbedConfig()
     create_index(es, args.index, dims=1024)
     cache = load_cache(args.cache)
-    manifest = load_demo_manifest(args.chunks_dir)
+    manifest = load_watch_manifest(args.chunks_dir)
 
     print(f"Ingesting {len(clips)} clips → index '{args.index}'")
     total_chunks = 0
@@ -144,11 +144,11 @@ def main() -> None:
                 "chunk_ids": [d.chunk_id for d in docs],
                 "chunk_paths": {d.chunk_id: d.path for d in docs},
             }
-            save_demo_manifest(args.chunks_dir, manifest)
+            save_watch_manifest(args.chunks_dir, manifest)
 
     es.indices.refresh(index=args.index)
     print(f"Done. Indexed {total_chunks} chunks into '{args.index}'.")
-    print(f"Demo manifest updated at {args.chunks_dir / '.demo_manifest.json'}")
+    print(f"Watcher manifest updated at {args.chunks_dir / '.manifest.json'}")
 
 
 if __name__ == "__main__":

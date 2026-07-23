@@ -7,7 +7,7 @@ Standalone multimodal b-roll search: link any folder of footage, search by text 
 
 Python FastAPI backend + TypeScript (Vite) frontend. Embeddings via **Jina v5-omni-small**; kNN via **Elasticsearch HNSW**.
 
-This is the editor-facing demo extracted from the [omnishot](https://github.com/jdarmada/omnishot) benchmark repo — no quantization matrix, no A/B compare UI.
+Built on the retrieval pipeline from the [omnishot](https://github.com/jdarmada/omnishot) benchmark repo: this app is the editor-facing search tool, while the benchmark studies how far video embeddings can be compressed.
 
 ## Quick start (Docker)
 
@@ -95,7 +95,7 @@ cp .env.example .env
 | `PEXELS_API_KEY` | No | Only for `download_pexels.py` |
 | `WATCH_DIR` | No | Initial library folder (default `./clips`) |
 | `CHUNKS_DIR` | No | Scene chunk output (default `./chunks`) |
-| `BROLL_INDEX` | No | ES index name (default `broll-demo`) |
+| `BROLL_INDEX` | No | ES index name (default `broll`) |
 
 The linked library path is also persisted in `chunks/.library.json` after you change it in the UI.
 

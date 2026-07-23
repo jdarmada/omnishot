@@ -1,5 +1,5 @@
 """
-Elasticsearch helpers for the demo index (float32 HNSW, 1024-d cosine).
+Elasticsearch helpers for the b-roll index (float32 HNSW, 1024-d cosine).
 """
 
 from __future__ import annotations

@@ -63,7 +63,7 @@ client construction in `backend/app.py` and `scripts/ingest.py`. Contributions
 making this a proper pluggable interface are welcome.
 
 **Index schema** lives in `backend/lib/index_elastic.py` (`create_index`). The
-demo uses a single float32 HNSW index; the upstream
+app uses a single float32 HNSW index; the upstream
 [omnishot](https://github.com/jdarmada/omnishot) benchmark explores
 quantization and dimension trade-offs if you want data before changing this.
 

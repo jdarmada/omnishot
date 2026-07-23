@@ -54,9 +54,9 @@ logging.basicConfig(
 logger = logging.getLogger("omnishot")
 
 CHUNKS_DIR = Path(os.environ.get("CHUNKS_DIR", "./chunks")).resolve()
-INDEX = os.environ.get("BROLL_INDEX", "broll-demo")
+INDEX = os.environ.get("BROLL_INDEX", "broll")
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
-MANIFEST = CHUNKS_DIR / ".demo_manifest.json"
+MANIFEST = CHUNKS_DIR / ".manifest.json"
 LIBRARY_CFG = CHUNKS_DIR / ".library.json"
 SCAN_EVERY = 4.0
 FRONTEND_DIST = ROOT / "frontend" / "dist"
@@ -178,7 +178,7 @@ def _ingest_clip(clip: Path, watch_dir: Path, manifest: dict) -> None:
                 duration=c.duration,
                 strategy="scene",
                 uploaded_at=time.strftime("%Y-%m-%d"),
-                uploader="demo",
+                uploader="library",
                 tags=[],
                 transcript=None,
                 embedding=vec,
