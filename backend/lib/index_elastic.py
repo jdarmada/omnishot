@@ -96,15 +96,19 @@ def knn_search(
     query_vector: list[float],
     k: int = 10,
     num_candidates: int = 100,
+    filter_clauses: list | None = None,
 ) -> list[dict]:
+    knn: dict = {
+        "field": "embedding",
+        "query_vector": query_vector,
+        "k": k,
+        "num_candidates": num_candidates,
+    }
+    if filter_clauses:
+        knn["filter"] = {"bool": {"filter": filter_clauses}}
     res = es.search(
         index=index,
-        knn={
-            "field": "embedding",
-            "query_vector": query_vector,
-            "k": k,
-            "num_candidates": num_candidates,
-        },
+        knn=knn,
         size=k,
         source_excludes=["embedding"],
     )

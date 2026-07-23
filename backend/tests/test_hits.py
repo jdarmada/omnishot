@@ -33,6 +33,19 @@ def test_keeps_first_hit_per_clip():
     assert out[0]["score"] == 0.95
 
 
+def test_counts_sibling_matches():
+    hits = [
+        make_hit("a__scene__000", "a", 0.9),
+        make_hit("b__scene__000", "b", 0.8),
+        make_hit("a__scene__001", "a", 0.7),
+        make_hit("a__scene__002", "a", 0.6),
+    ]
+    out = _hits_payload(hits)
+    by_clip = {h["clip_id"]: h for h in out}
+    assert by_clip["a"]["more_matches"] == 2
+    assert by_clip["b"]["more_matches"] == 0
+
+
 def test_excludes_requested_chunk():
     hits = [
         make_hit("a__scene__000", "a"),
@@ -57,4 +70,6 @@ def test_payload_shape():
         "duration": 2.0,
         "start_sec": 0.0,
         "end_sec": 2.0,
+        "uploaded_at": None,
+        "more_matches": 0,
     }

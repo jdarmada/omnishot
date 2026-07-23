@@ -6,12 +6,14 @@ export interface Hit {
   start_sec: number;
   end_sec: number;
   uploaded_at?: string | null;
+  more_matches?: number;
 }
 
 export interface SearchResponse {
   hits: Hit[];
   embed_ms: number;
   search_ms: number;
+  qid?: string;
 }
 
 export interface StatusResponse {
@@ -91,6 +93,21 @@ export async function searchImage(image_b64: string, k = 9): Promise<SearchRespo
 export async function searchSimilar(chunkId: string): Promise<SearchResponse> {
   const r = await fetch(`/api/similar/${encodeURIComponent(chunkId)}`, {
     method: "POST",
+  });
+  if (!r.ok) throw new Error(await parseError(r));
+  return r.json();
+}
+
+export async function fetchClipMatches(
+  qid: string,
+  clipId: string,
+  excludeChunk?: string,
+  k = 12
+): Promise<{ hits: Hit[]; search_ms: number }> {
+  const r = await fetch("/api/clip_matches", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ qid, clip_id: clipId, exclude_chunk: excludeChunk, k }),
   });
   if (!r.ok) throw new Error(await parseError(r));
   return r.json();

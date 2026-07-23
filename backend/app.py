@@ -22,8 +22,11 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -101,6 +104,19 @@ status = {
     "queue_total": 0,
 }
 events: list[dict] = []
+
+# Recent query vectors, so expanding a result's sibling scenes doesn't
+# re-pay the embedding API. Keyed by a short id returned with each search.
+_QVEC_CACHE_MAX = 64
+_qvec_cache: OrderedDict[str, list[float]] = OrderedDict()
+
+
+def _remember_qvec(vec: list[float]) -> str:
+    qid = uuid.uuid4().hex[:12]
+    _qvec_cache[qid] = vec
+    while len(_qvec_cache) > _QVEC_CACHE_MAX:
+        _qvec_cache.popitem(last=False)
+    return qid
 
 
 def log_event(msg: str) -> None:
@@ -466,25 +482,34 @@ async def pick_and_set_library():
     return await set_library_api(LibraryRequest(path=picked["path"]))
 
 
+def _chunk_payload(h: dict) -> dict:
+    return {
+        "chunk_id": h["chunk_id"],
+        "clip_id": h["clip_id"],
+        "score": h.get("_score") or 0.0,
+        "duration": h["duration"],
+        "start_sec": h["start_sec"],
+        "end_sec": h["end_sec"],
+        "uploaded_at": h.get("uploaded_at"),
+    }
+
+
 def _hits_payload(hits, exclude_id: str | None = None, k: int = 9):
-    out = []
-    seen_clips: set[str] = set()
+    """One card per clip (best chunk first), counting matched sibling scenes."""
+    out: list[dict] = []
+    cards_by_clip: dict[str, dict] = {}
     for h in hits:
         if h["chunk_id"] == exclude_id:
             continue
-        if h["clip_id"] in seen_clips:
-            continue
-        seen_clips.add(h["clip_id"])
-        out.append(
-            {
-                "chunk_id": h["chunk_id"],
-                "clip_id": h["clip_id"],
-                "score": h["_score"],
-                "duration": h["duration"],
-                "start_sec": h["start_sec"],
-                "end_sec": h["end_sec"],
-            }
-        )
+        clip_id = h["clip_id"]
+        card = cards_by_clip.get(clip_id)
+        if card is None:
+            card = {**_chunk_payload(h), "more_matches": 0}
+            cards_by_clip[clip_id] = card
+            out.append(card)
+        else:
+            # A lower-ranked scene from a clip we already show.
+            card["more_matches"] += 1
     return out[:k]
 
 
@@ -502,6 +527,7 @@ async def similar(chunk_id: str):
         "hits": _hits_payload(hits, exclude_id=chunk_id),
         "embed_ms": 0.0,
         "search_ms": search_ms,
+        "qid": _remember_qvec(vec),
     }
 
 
@@ -522,6 +548,7 @@ async def search_image(req: ImageSearchRequest):
         "hits": _hits_payload(hits, k=req.k),
         "embed_ms": embed_ms,
         "search_ms": search_ms,
+        "qid": _remember_qvec(qv),
     }
 
 
@@ -540,7 +567,46 @@ async def search(req: SearchRequest):
         "hits": _hits_payload(hits, k=req.k),
         "embed_ms": embed_ms,
         "search_ms": search_ms,
+        "qid": _remember_qvec(qv),
     }
+
+
+class ClipMatchesRequest(BaseModel):
+    qid: str
+    clip_id: str
+    # typing.Optional (not `str | None`): Pydantic evaluates annotations at
+    # runtime and PEP 604 unions don't eval on Python 3.9.
+    exclude_chunk: Optional[str] = None  # noqa: UP045
+    k: int = 12
+
+
+@app.post("/api/clip_matches")
+async def clip_matches(req: ClipMatchesRequest):
+    """All scenes of one clip that match the original query, ranked.
+
+    Uses the cached query vector, so expanding costs a filtered kNN only —
+    no embedding API call.
+    """
+    vec = _qvec_cache.get(req.qid)
+    if vec is None:
+        raise HTTPException(410, "query expired — run the search again")
+    try:
+        t0 = time.perf_counter()
+        hits = knn_search(
+            es,
+            INDEX,
+            vec,
+            k=req.k + 1,
+            num_candidates=500,
+            filter_clauses=[{"term": {"clip_id": req.clip_id}}],
+        )
+        search_ms = (time.perf_counter() - t0) * 1000
+    except Exception as e:
+        raise HTTPException(500, f"Clip expansion failed: {e}") from e
+    out = [
+        _chunk_payload(h) for h in hits if h["chunk_id"] != req.exclude_chunk
+    ][: req.k]
+    return {"hits": out, "search_ms": search_ms}
 
 
 @app.get("/api/clip/{chunk_id}")

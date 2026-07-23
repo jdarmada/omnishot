@@ -1,5 +1,6 @@
 import "./style.css";
 import {
+  fetchClipMatches,
   fetchRecent,
   fetchStatus,
   pickAndSetLibrary,
@@ -40,6 +41,7 @@ let imageB64: string | null = null;
 let mode: "recent" | "search" = "recent";
 let lastChunks = -1;
 let logOpen = false;
+let lastQid: string | null = null;
 
 const EMPTY_DEFAULT = "Link a folder of footage to get started.";
 const EMPTY_DEFAULT_HINT =
@@ -108,6 +110,12 @@ function render(hits: Hit[], emptyMessage = "No matches. Try different words."):
           <button class="reveal" type="button" data-reveal="${h.chunk_id}">Reveal ↗</button>
         </span>
       </div>
+      ${
+        h.more_matches && lastQid
+          ? `<button class="expand-bar" type="button" data-expand-clip="${h.clip_id}" data-expand-chunk="${h.chunk_id}">${h.more_matches} more matching scene${h.more_matches === 1 ? "" : "s"} in this clip ▾</button>
+      <div class="scenes" hidden></div>`
+          : ""
+      }
     </div>`
     )
     .join("");
@@ -115,6 +123,10 @@ function render(hits: Hit[], emptyMessage = "No matches. Try different words."):
   grid.querySelectorAll<HTMLVideoElement>("video").forEach((video) => {
     video.addEventListener("mouseenter", () => void video.play());
     video.addEventListener("mouseleave", () => video.pause());
+  });
+
+  grid.querySelectorAll<HTMLButtonElement>("[data-expand-clip]").forEach((btn) => {
+    btn.addEventListener("click", () => void toggleScenes(btn));
   });
 
   grid.querySelectorAll<HTMLButtonElement>("[data-similar]").forEach((btn) => {
@@ -136,6 +148,7 @@ async function loadRecent(): Promise<void> {
   try {
     const data = await fetchRecent(9);
     mode = "recent";
+    lastQid = null;
     latEl.textContent = "";
     render(data.hits, EMPTY_DEFAULT);
   } catch {
@@ -224,6 +237,7 @@ async function runTextSearch(query: string, push = true): Promise<void> {
   try {
     const data = await searchText(query);
     mode = "search";
+    lastQid = data.qid ?? null;
     latEl.innerHTML = `<span class="lat">embed ${data.embed_ms.toFixed(0)}ms · search ${data.search_ms.toFixed(1)}ms</span>`;
     render(data.hits);
     if (push) pushUrl(`${location.pathname}?q=${encodeURIComponent(query)}`);
@@ -255,6 +269,7 @@ async function findByImage(): Promise<void> {
   try {
     const data = await searchImage(imageB64);
     mode = "search";
+    lastQid = data.qid ?? null;
     latEl.innerHTML = `<span class="lat">image query · embed ${data.embed_ms.toFixed(0)}ms · search ${data.search_ms.toFixed(1)}ms</span>`;
     render(data.hits);
     // Image queries can't be encoded in the URL; just clear stale params.
@@ -296,6 +311,7 @@ async function similar(chunkId: string, push = true): Promise<void> {
   try {
     const data = await searchSimilar(chunkId);
     mode = "search";
+    lastQid = data.qid ?? null;
     latEl.innerHTML = `<span class="lat">similar via stored vector · search ${data.search_ms.toFixed(1)}ms · no embedding call</span>`;
     render(data.hits);
     if (push) pushUrl(`${location.pathname}?similar=${encodeURIComponent(chunkId)}`);
@@ -318,6 +334,50 @@ async function dispatchFromLocation(): Promise<void> {
   } else {
     await goHome(false);
   }
+}
+
+async function toggleScenes(btn: HTMLButtonElement): Promise<void> {
+  const scenes = btn.nextElementSibling as HTMLElement | null;
+  if (!scenes) return;
+  if (!scenes.hidden) {
+    scenes.hidden = true;
+    btn.textContent = btn.textContent!.replace("▴", "▾");
+    return;
+  }
+  if (!scenes.dataset.loaded) {
+    if (!lastQid) return;
+    btn.disabled = true;
+    try {
+      const data = await fetchClipMatches(
+        lastQid,
+        btn.dataset.expandClip!,
+        btn.dataset.expandChunk
+      );
+      scenes.innerHTML = data.hits.length
+        ? data.hits
+            .map(
+              (s) => `
+        <div class="scene">
+          <video src="/api/clip/${encodeURIComponent(s.chunk_id)}" muted loop playsinline preload="metadata"></video>
+          <span class="timecode"><b>${tc(s.start_sec)}–${tc(s.end_sec)}</b> · ${s.duration.toFixed(1)}s</span>
+        </div>`
+            )
+            .join("")
+        : `<div class="scene-empty">No other matching scenes.</div>`;
+      scenes.querySelectorAll<HTMLVideoElement>("video").forEach((video) => {
+        video.addEventListener("mouseenter", () => void video.play());
+        video.addEventListener("mouseleave", () => video.pause());
+      });
+      scenes.dataset.loaded = "1";
+    } catch (e) {
+      alert(`Could not expand: ${(e as Error).message}`);
+      return;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  scenes.hidden = false;
+  btn.textContent = btn.textContent!.replace("▾", "▴");
 }
 
 async function reveal(chunkId: string, btn: HTMLButtonElement): Promise<void> {

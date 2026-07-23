@@ -273,6 +273,62 @@ button.image:disabled {
   color: var(--accent);
 }
 
+.expand-bar {
+  display: block;
+  width: 100%;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: var(--paper-2);
+  border: none;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  padding: 7px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.expand-bar:hover {
+  color: var(--accent);
+}
+
+.expand-bar:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.scenes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--paper);
+}
+
+.scene video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+  background: #111;
+  border: 1px solid var(--border);
+}
+
+.scene .timecode {
+  display: block;
+  margin-top: 3px;
+}
+
+.scene-empty {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 4px 0;
+}
+
 .timecode {
   font-size: 10px;
   color: var(--muted);
