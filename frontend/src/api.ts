@@ -52,6 +52,23 @@ export async function fetchRecent(k = 9): Promise<SearchResponse> {
   return r.json();
 }
 
+export interface Category {
+  label: string;
+  count: number;
+}
+
+export async function fetchCategories(): Promise<{ categories: Category[] }> {
+  const r = await fetch("/api/categories");
+  if (!r.ok) throw new Error(await parseError(r));
+  return r.json();
+}
+
+export async function fetchCategory(label: string, k = 24): Promise<SearchResponse> {
+  const r = await fetch(`/api/category/${encodeURIComponent(label)}?k=${k}`);
+  if (!r.ok) throw new Error(await parseError(r));
+  return r.json();
+}
+
 export async function pickAndSetLibrary(): Promise<LibraryResponse> {
   const r = await fetch("/api/library/pick", { method: "POST" });
   if (!r.ok) throw new Error(await parseError(r));

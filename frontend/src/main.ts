@@ -1,5 +1,7 @@
 import "./style.css";
 import {
+  fetchCategories,
+  fetchCategory,
   fetchRecent,
   fetchStatus,
   pickAndSetLibrary,
@@ -16,6 +18,7 @@ const $ = <T extends HTMLElement>(id: string) => {
   return el as T;
 };
 
+const catsEl = $("cats");
 const qInput = $<HTMLInputElement>("q");
 const goBtn = $<HTMLButtonElement>("go");
 const uploadImageBtn = $<HTMLButtonElement>("upload-image");
@@ -37,7 +40,8 @@ const searchRow = $("searchrow");
 const latEl = $("s-lat");
 
 let imageB64: string | null = null;
-let mode: "recent" | "search" = "recent";
+let mode: "recent" | "search" | "category" = "recent";
+let currentCategory: string | null = null;
 let lastChunks = -1;
 let logOpen = false;
 
@@ -91,7 +95,9 @@ function render(hits: Hit[], emptyMessage = "No matches. Try different words."):
     return;
   }
   empty.style.display = "none";
-  gridHeader.hidden = mode !== "recent";
+  gridHeader.hidden = mode === "search";
+  gridHeader.textContent =
+    mode === "category" ? `category · ${currentCategory}` : "Latest additions";
   grid.innerHTML = hits
     .map(
       (h, i) => `
@@ -136,10 +142,57 @@ async function loadRecent(): Promise<void> {
   try {
     const data = await fetchRecent(9);
     mode = "recent";
+    currentCategory = null;
     latEl.textContent = "";
     render(data.hits, EMPTY_DEFAULT);
+    updateActiveChip();
   } catch {
     // backend not ready yet; poll will retry on the next chunk-count change
+  }
+}
+
+function updateActiveChip(): void {
+  catsEl.querySelectorAll<HTMLButtonElement>(".cat-chip").forEach((chip) => {
+    chip.classList.toggle("active", chip.dataset.cat === currentCategory);
+  });
+}
+
+async function loadCategories(): Promise<void> {
+  try {
+    const data = await fetchCategories();
+    catsEl.hidden = data.categories.length === 0;
+    catsEl.innerHTML = data.categories
+      .map(
+        (c) =>
+          `<button type="button" class="cat-chip" data-cat="${c.label}">${c.label}<span>${c.count}</span></button>`
+      )
+      .join("");
+    catsEl.querySelectorAll<HTMLButtonElement>(".cat-chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        const label = chip.dataset.cat;
+        if (label) void openCategory(label);
+      });
+    });
+    updateActiveChip();
+  } catch {
+    // categories may still be warming up; refreshed on the next poll change
+  }
+}
+
+async function openCategory(label: string, push = true): Promise<void> {
+  clearImage();
+  qInput.value = "";
+  try {
+    const data = await fetchCategory(label);
+    mode = "category";
+    currentCategory = label;
+    latEl.textContent = "";
+    render(data.hits, `Nothing in "${label}" yet.`);
+    updateActiveChip();
+    if (push) pushUrl(`${location.pathname}?category=${encodeURIComponent(label)}`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } catch (e) {
+    alert(`Could not load category: ${(e as Error).message}`);
   }
 }
 
@@ -176,10 +229,11 @@ async function poll(): Promise<void> {
       .map((e) => `<div>${e.t} · ${e.msg}</div>`)
       .join("");
 
-    // Refresh the landing grid when new footage finishes indexing.
-    if (mode === "recent" && s.chunks !== lastChunks) {
+    // Refresh the landing grid and category counts as footage finishes indexing.
+    if (s.chunks !== lastChunks) {
       lastChunks = s.chunks;
-      void loadRecent();
+      void loadCategories();
+      if (mode === "recent") void loadRecent();
     }
   } catch {
     $("s-state").textContent = "backend offline";
@@ -310,11 +364,14 @@ async function dispatchFromLocation(): Promise<void> {
   const params = new URLSearchParams(location.search);
   const q = params.get("q");
   const sim = params.get("similar");
+  const cat = params.get("category");
   if (q) {
     qInput.value = q;
     await runTextSearch(q, false);
   } else if (sim) {
     await similar(sim, false);
+  } else if (cat) {
+    await openCategory(cat, false);
   } else {
     await goHome(false);
   }
@@ -377,5 +434,6 @@ qInput.addEventListener("keydown", (e) => {
 window.addEventListener("popstate", () => void dispatchFromLocation());
 
 void poll();
+void loadCategories();
 void dispatchFromLocation();
 setInterval(() => void poll(), 3000);

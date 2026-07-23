@@ -145,6 +145,29 @@ curl -X POST http://localhost:8001/api/library \
   -d '{"path":"/Users/you/Movies/B-roll"}'
 ```
 
+### Categories
+
+Chunks are automatically sorted into browseable categories (nature, people,
+urban, animals, …) shown as chips on the home page. Because Jina embeds text
+and video into the same space, each category is just a short text description
+embedded once — every chunk is assigned to its closest category at ingest
+time using the embedding it already has, so **new footage joins the right
+category automatically** with zero extra API calls. Chunks that don't fit
+anywhere land in "other".
+
+To define your own categories, write `chunks/.categories.json`:
+
+```json
+{
+  "drone shots": "aerial drone footage looking down from above",
+  "interviews": "a person talking to the camera, interview setup"
+}
+```
+
+then delete `chunks/.category_anchors.json` and restart — existing chunks are
+re-sorted on startup. Tune the assignment strictness with `CATEGORY_MIN_SIM`
+(default 0.15; higher sends more chunks to "other").
+
 ### What you can do in the UI
 
 - **Text search** — describe the shot visually

@@ -28,6 +28,7 @@ class ChunkDoc:
     tags: list
     transcript: str | None
     embedding: list
+    category: str = ""
 
 
 def es_client() -> Elasticsearch:
@@ -64,6 +65,7 @@ def create_index(
             "uploaded_at": {"type": "date"},
             "uploader": {"type": "keyword"},
             "tags": {"type": "keyword"},
+            "category": {"type": "keyword"},
             "transcript": {"type": "text", "analyzer": "english"},
             "embedding": {
                 "type": "dense_vector",
@@ -87,6 +89,17 @@ def bulk_index(es: Elasticsearch, name: str, docs: Iterable[ChunkDoc]) -> int:
         logger.warning("%d bulk indexing errors", len(errors))
         for e in errors[:3]:
             logger.warning("  %s", e)
+    return success
+
+
+def bulk_set_categories(es: Elasticsearch, name: str, id_to_category: dict) -> int:
+    actions = (
+        {"_op_type": "update", "_index": name, "_id": cid, "doc": {"category": cat}}
+        for cid, cat in id_to_category.items()
+    )
+    success, errors = helpers.bulk(es, actions, raise_on_error=False)
+    if errors:
+        logger.warning("%d category update errors", len(errors))
     return success
 
 

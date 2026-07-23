@@ -35,11 +35,13 @@ from pydantic import BaseModel
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from lib.categories import CategoryIndex, build_category_index  # noqa: E402
 from lib.chunk_video import chunk_video  # noqa: E402
 from lib.embed_jina import EmbedConfig, JinaClient  # noqa: E402
 from lib.index_elastic import (  # noqa: E402
     ChunkDoc,
     bulk_index,
+    bulk_set_categories,
     create_index,
     es_client,
     knn_search,
@@ -87,6 +89,7 @@ app.add_middleware(
 es = es_client()
 jina = JinaClient()
 _cfg = EmbedConfig()
+category_index: CategoryIndex | None = None
 
 _lib_lock = threading.Lock()
 _watch_dir = DEFAULT_LIBRARY
@@ -175,6 +178,7 @@ def _ingest_clip(clip: Path, watch_dir: Path, manifest: dict) -> None:
         except Exception as e:
             logger.warning("embed failed for %s: %s", c.chunk_id, e)
             continue
+        category = category_index.classify(vec)[0] if category_index else ""
         docs.append(
             ChunkDoc(
                 chunk_id=c.chunk_id,
@@ -189,6 +193,7 @@ def _ingest_clip(clip: Path, watch_dir: Path, manifest: dict) -> None:
                 tags=[],
                 transcript=None,
                 embedding=vec,
+                category=category,
             )
         )
     if docs:
@@ -257,8 +262,38 @@ def set_library(path: Path, *, clear: bool = True) -> Path:
         return _watch_dir
 
 
+def _backfill_categories() -> None:
+    """Categorize docs indexed before categories existed (or left blank)."""
+    if not category_index:
+        return
+    query = {
+        "bool": {
+            "should": [
+                {"bool": {"must_not": {"exists": {"field": "category"}}}},
+                {"term": {"category": ""}},
+            ],
+            "minimum_should_match": 1,
+        }
+    }
+    total = 0
+    while True:
+        res = es.search(index=INDEX, query=query, size=200, source_includes=["embedding"])
+        hits = res["hits"]["hits"]
+        if not hits:
+            break
+        updates = {
+            h["_id"]: category_index.classify(h["_source"]["embedding"])[0]
+            for h in hits
+        }
+        total += bulk_set_categories(es, INDEX, updates)
+        es.indices.refresh(index=INDEX)
+    if total:
+        log_event(f"{total} existing chunks sorted into categories")
+        logger.info("backfilled categories for %d chunks", total)
+
+
 def watcher() -> None:
-    global _watch_dir
+    global _watch_dir, category_index
     # Wait for Elasticsearch rather than dying if it isn't up yet.
     while True:
         try:
@@ -268,6 +303,13 @@ def watcher() -> None:
             status.update(state="waiting for elasticsearch", current=None)
             logger.warning("elasticsearch not ready (%s); retrying in 5s", e)
             time.sleep(5)
+    try:
+        # Additive no-op if the field already exists in the mapping.
+        es.indices.put_mapping(index=INDEX, properties={"category": {"type": "keyword"}})
+        category_index = build_category_index(jina, _cfg, CHUNKS_DIR)
+        _backfill_categories()
+    except Exception as e:
+        logger.warning("categories disabled: %s", e)
     with _lib_lock:
         _watch_dir = _load_library_path()
         if _watch_dir == DEFAULT_LIBRARY:
@@ -367,6 +409,49 @@ async def api_status():
         "watch_dir": watch,
         "events": list(reversed(events)),
     }
+
+
+@app.get("/api/categories")
+async def categories():
+    """Category labels with clip counts, largest first, 'other' last."""
+    try:
+        res = es.search(
+            index=INDEX,
+            size=0,
+            aggs={
+                "clips_per_cat": {
+                    "terms": {"field": "category", "size": 100},
+                    "aggs": {"clips": {"cardinality": {"field": "clip_id"}}},
+                },
+            },
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Category lookup failed: {e}") from e
+    buckets = res["aggregations"]["clips_per_cat"]["buckets"]
+    cats = [
+        {"label": b["key"], "count": b["clips"]["value"]}
+        for b in buckets
+        if b["key"]
+    ]
+    cats.sort(key=lambda c: (c["label"] == "other", -c["count"]))
+    return {"categories": cats}
+
+
+@app.get("/api/category/{label}")
+async def category_clips(label: str, k: int = 24):
+    """Clips in one category, newest first, one chunk per clip."""
+    try:
+        res = es.search(
+            index=INDEX,
+            query={"term": {"category": label}},
+            size=200,
+            source_excludes=["embedding"],
+            sort=[{"uploaded_at": {"order": "desc"}}],
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Category search failed: {e}") from e
+    hits = [{**h["_source"], "_score": h.get("_score")} for h in res["hits"]["hits"]]
+    return {"hits": _hits_payload(hits, k=k)}
 
 
 @app.get("/api/recent")
@@ -479,10 +564,11 @@ def _hits_payload(hits, exclude_id: str | None = None, k: int = 9):
             {
                 "chunk_id": h["chunk_id"],
                 "clip_id": h["clip_id"],
-                "score": h["_score"],
+                "score": h.get("_score") or 0.0,
                 "duration": h["duration"],
                 "start_sec": h["start_sec"],
                 "end_sec": h["end_sec"],
+                "uploaded_at": h.get("uploaded_at"),
             }
         )
     return out[:k]

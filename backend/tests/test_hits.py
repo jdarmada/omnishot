@@ -57,4 +57,5 @@ def test_payload_shape():
         "duration": 2.0,
         "start_sec": 0.0,
         "end_sec": 2.0,
+        "uploaded_at": None,
     }
