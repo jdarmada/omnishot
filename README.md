@@ -1,10 +1,30 @@
 # omnishot-ts
 
+[![CI](https://github.com/jdarmada/omnishot-ts/actions/workflows/ci.yml/badge.svg)](https://github.com/jdarmada/omnishot-ts/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 Standalone multimodal b-roll search: link any folder of footage, search by text or image, jump to the source clip in your file manager.
 
 Python FastAPI backend + TypeScript (Vite) frontend. Embeddings via **Jina v5-omni-small**; kNN via **Elasticsearch HNSW**.
 
-This is the editor-facing demo extracted from the [omnishot](https://github.com/your-username/omnishot) benchmark repo — no quantization matrix, no A/B compare UI.
+This is the editor-facing demo extracted from the [omnishot](https://github.com/jdarmada/omnishot) benchmark repo — no quantization matrix, no A/B compare UI.
+
+## Quick start (Docker)
+
+The fastest way to try it — one command runs Elasticsearch + the app:
+
+```bash
+git clone https://github.com/jdarmada/omnishot-ts
+cd omnishot-ts
+cp .env.example .env      # set JINA_API_KEY (free key at jina.ai)
+docker compose up -d
+```
+
+Open **http://localhost:8001** and drop video files into `./clips`.
+
+> Docker mode watches the mounted `./clips` folder. The native folder picker
+> and Reveal button need the backend running directly on your machine — see
+> [Run the app](#run-the-app) below for the local setup.
 
 ```
 omnishot-ts/
@@ -84,7 +104,7 @@ The linked library path is also persisted in `chunks/.library.json` after you ch
 ## Start Elasticsearch
 
 ```bash
-docker compose up -d
+docker compose up -d elasticsearch
 curl http://localhost:9200   # should return cluster info
 ```
 
@@ -128,7 +148,7 @@ curl -X POST http://localhost:8001/api/library \
 ### What you can do in the UI
 
 - **Text search** — describe the shot visually
-- **Image search** — drag a reference image onto the search bar
+- **Image search** — click **Image** to upload a reference, or drag one onto the search bar
 - **≈ More** — find visually similar clips (reuses the stored vector, no Jina call)
 - **Reveal** — open the source file in Finder / Explorer / file manager (the original in your library)
 
@@ -187,6 +207,30 @@ library folder  →  scene chunk (PySceneDetect)  →  640px proxy  →  Jina em
 ```
 
 Membership follows the filesystem: files in the linked folder are searchable; files removed from it leave the corpus. Chunk files under `./chunks` are app-owned derivatives.
+
+---
+
+## Security
+
+This is a **local tool** — it opens file dialogs and your file manager on the
+machine running the backend, and it has no authentication. It binds to
+`127.0.0.1` by default. **Do not expose it to the public internet.** See
+[SECURITY.md](SECURITY.md) for the full threat model and how to report
+vulnerabilities.
+
+---
+
+## Contributing
+
+Dev setup, test commands, and extension points (including how to swap in a
+different embedding provider) are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Releases are tracked in [CHANGELOG.md](CHANGELOG.md).
+
+```bash
+pytest                        # backend tests — no ES or API keys needed
+ruff check .                  # Python lint
+cd frontend && npm run lint   # TypeScript lint
+```
 
 ---
 
