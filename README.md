@@ -3,11 +3,9 @@
 [![CI](https://github.com/jdarmada/omnishot/actions/workflows/ci.yml/badge.svg)](https://github.com/jdarmada/omnishot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Standalone multimodal b-roll search: link any folder of footage, search by text or image, jump to the source clip in your file manager.
+Multimodal Media search: link any folder of footage, search by text or image, jump to the source clip in your file manager.
 
-Python FastAPI backend + TypeScript (Vite) frontend. Embeddings via **Jina v5-omni-small**; kNN via **Elasticsearch HNSW**.
-
-Built on the retrieval pipeline from the [omnishot-benchmark](https://github.com/jdarmada/omnishot-benchmark) repo: this app is the editor-facing search tool, while the benchmark studies how far video embeddings can be compressed.
+Python FastAPI backend + TypeScript (Vite) frontend. Embeddings via [jina-embeddings-v5-omni-small](https://huggingface.co/jinaai/jina-embeddings-v5-omni-small); kNN via **Elasticsearch HNSW**.
 
 ## Quick start (Docker)
 
@@ -163,7 +161,7 @@ Then open **http://localhost:8001** (backend serves `frontend/dist`).
 
 ---
 
-## Download videos
+## Download sample videos
 
 Point downloads at your library folder (or at `./clips`, then **Change folder…** to that path).
 
