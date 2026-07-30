@@ -7,6 +7,11 @@ Multimodal Media search: link any folder of footage, search by text or image, ju
 
 Python FastAPI backend + TypeScript (Vite) frontend. Embeddings via [jina-embeddings-v5-omni-small](https://huggingface.co/jinaai/jina-embeddings-v5-omni-small); kNN via **Elasticsearch HNSW**.
 
+## Architecture
+
+<img width="1044" height="401" alt="Screenshot 2026-07-30 at 10 25 07 AM" src="https://github.com/user-attachments/assets/eb7bb7b5-1b5b-416d-9490-172aba6a6733" />
+
+
 ## Quick start (Docker)
 
 
