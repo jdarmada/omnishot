@@ -1,14 +1,14 @@
 # Core
-elasticsearch>=9.4.1
-requests>=2.32.0
-python-dotenv>=1.2.2
-tqdm>=4.66.0
+elasticsearch>=9.5.1
+requests>=2.34.2
+python-dotenv>=1.2.3
+tqdm>=4.70.1
 
 # Video processing
-scenedetect[opencv]>=0.6.4
-yt-dlp>=2024.3.10
+scenedetect[opencv]>=0.7.1
+yt-dlp>=2026.8.19
 
 # API server
-fastapi>=0.139.2
-pydantic>=2.0.0
-uvicorn[standard]>=0.30.0
+fastapi>=0.141.1
+pydantic>=2.13.5
+uvicorn[standard]>=0.53.0
