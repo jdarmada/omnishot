@@ -5,6 +5,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -20,9 +21,114 @@ SPEC.loader.exec_module(downloader)
 
 
 class DownloaderTests(unittest.TestCase):
-    def run_main(self, args):
-        with patch.object(sys, "argv", [str(SCRIPT), *map(str, args)]), contextlib.redirect_stdout(io.StringIO()):
+    def run_main(self, args, env=None):
+        environment = {"YOUTUBE_COOKIES_FROM_BROWSER": "", "YOUTUBE_COOKIES_FILE": "", **(env or {})}
+        dotenv = types.SimpleNamespace(load_dotenv=lambda *args, **kwargs: None)
+        with patch.object(sys, "argv", [str(SCRIPT), *map(str, args)]), contextlib.redirect_stdout(io.StringIO()), \
+                patch.dict(os.environ, environment), patch.dict(sys.modules, {"dotenv": dotenv}):
             downloader.main()
+
+    def test_authentication_options_forwarded_to_ytdlp(self):
+        captured = []
+
+        class FakeYoutubeDL:
+            def __init__(self, opts):
+                captured.append(opts)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def extract_info(self, *args, **kwargs):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            sys.modules, {"yt_dlp": types.SimpleNamespace(YoutubeDL=FakeYoutubeDL)},
+        ):
+            downloader.download_query("snow", Path(tmp), set(), 1)
+            downloader.download_query("snow", Path(tmp), set(), 1, cookies_from_browser="chrome")
+            downloader.download_query("snow", Path(tmp), set(), 1, cookies=Path("~/youtube-cookies.txt"))
+        self.assertNotIn("cookiesfrombrowser", captured[0])
+        self.assertNotIn("cookiefile", captured[0])
+        for opts in captured:
+            self.assertNotIn("extractor_args", opts)
+            self.assertEqual(opts["js_runtimes"], {"deno": {}, "node": {}})
+            self.assertFalse(opts.get("no_warnings", False))
+        self.assertEqual(captured[1]["cookiesfrombrowser"], ("chrome",))
+        self.assertNotIn("cookiefile", captured[1])
+        self.assertNotIn("extractor_args", captured[1])
+        self.assertEqual(captured[2]["cookiefile"], str(Path("~/youtube-cookies.txt").expanduser()))
+        self.assertNotIn("cookiesfrombrowser", captured[2])
+        self.assertNotIn("extractor_args", captured[2])
+
+    def test_authentication_cli_validation(self):
+        for args in (
+            ["--cookies-from-browser", "chrome", "--cookies", "cookies.txt"],
+            ["--cookies-from-browser", "unknown"],
+            ["--cookies-from-browser", "chrome:Profile 1"],
+        ):
+            with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as caught:
+                    self.run_main([*args, "--dry-run"])
+                self.assertEqual(caught.exception.code, 2)
+
+    def test_authentication_dry_run_without_dependencies_or_cookie_access(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "new"
+            missing = Path(tmp) / "missing-cookies.txt"
+            for args in (["--cookies-from-browser", "chrome"], ["--cookies", str(missing)]):
+                result = subprocess.run(
+                    [sys.executable, "-S", str(SCRIPT), "--out", str(out), *args, "--dry-run"],
+                    capture_output=True, text=True, check=True,
+                    env={**os.environ, "YOUTUBE_COOKIES_FROM_BROWSER": "unknown", "YOUTUBE_COOKIES_FILE": "missing"},
+                )
+                self.assertIn("wildlife documentary", result.stdout)
+                self.assertNotIn(str(missing), result.stdout)
+                self.assertFalse(out.exists())
+                self.assertFalse(missing.exists())
+
+    def test_missing_cookie_file_fails_before_output_creation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "new"
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                self.run_main(["--out", out, "--cookies", Path(tmp) / "missing.txt"])
+            self.assertEqual(caught.exception.code, 2)
+            self.assertFalse(out.exists())
+
+    def test_environment_authentication_and_cli_precedence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cookie_file = Path(tmp) / "cookies.txt"
+            cookie_file.write_text("# Netscape HTTP Cookie File\n")
+            cases = [
+                ({"YOUTUBE_COOKIES_FROM_BROWSER": "firefox"}, [], "firefox", None),
+                ({"YOUTUBE_COOKIES_FILE": str(cookie_file)}, [], None, cookie_file),
+                ({"YOUTUBE_COOKIES_FROM_BROWSER": "invalid", "YOUTUBE_COOKIES_FILE": "missing"},
+                 ["--cookies-from-browser", "chrome"], "chrome", None),
+                ({"YOUTUBE_COOKIES_FROM_BROWSER": "invalid", "YOUTUBE_COOKIES_FILE": "missing"},
+                 ["--cookies", cookie_file], None, cookie_file),
+            ]
+            for index, (env, args, browser, cookies) in enumerate(cases):
+                with self.subTest(index=index), patch.object(downloader, "SEARCH_TERMS", {"ski": ["snow"]}), \
+                        patch.object(downloader, "download_query", return_value=[]) as download:
+                    self.run_main(["--out", Path(tmp) / str(index), *args], env=env)
+                    self.assertEqual(download.call_args.kwargs["cookies_from_browser"], browser)
+                    self.assertEqual(download.call_args.kwargs["cookies"], cookies)
+
+    def test_environment_authentication_validation(self):
+        for env in (
+            {"YOUTUBE_COOKIES_FROM_BROWSER": "chrome", "YOUTUBE_COOKIES_FILE": "missing"},
+            {"YOUTUBE_COOKIES_FROM_BROWSER": "unknown"},
+            {"YOUTUBE_COOKIES_FILE": "/nonexistent/youtube-cookies.txt"},
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                out = Path(tmp) / "new"
+                with self.subTest(env=env), contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit) as caught:
+                        self.run_main(["--out", out], env=env)
+                    self.assertEqual(caught.exception.code, 2)
+                    self.assertFalse(out.exists())
 
     def test_dry_run_without_dependencies_or_writes(self):
         with tempfile.TemporaryDirectory() as tmp:

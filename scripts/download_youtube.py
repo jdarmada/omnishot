@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import re
 import sys
@@ -55,6 +56,7 @@ MIN_DURATION = 120
 MAX_DURATION = 1200
 MAX_HEIGHT = 720
 RESULTS_PER_QUERY = 3
+COOKIE_BROWSERS = ("brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale")
 
 
 def _progress_hook(d: dict) -> None:
@@ -113,6 +115,8 @@ def download_query(
     per_query: int = RESULTS_PER_QUERY,
     min_duration: int = MIN_DURATION,
     max_duration: int = MAX_DURATION,
+    cookies_from_browser: str | None = None,
+    cookies: Path | None = None,
 ) -> list[str]:
     n = min(per_query, per_cat_remaining)
     if n <= 0:
@@ -124,7 +128,7 @@ def download_query(
     try:
         import yt_dlp
     except ImportError:
-        sys.exit("yt-dlp not installed. Run: pip install yt-dlp")
+        sys.exit('yt-dlp not installed. Run: python -m pip install "yt-dlp[default]"')
 
     reserved: set[str] = set()
     completed: set[str] = set()
@@ -161,7 +165,7 @@ def download_query(
         ),
         "outtmpl": str(cat_dir / "%(id)s.%(ext)s"),
         "quiet": True,
-        "no_warnings": True,
+        "js_runtimes": {"deno": {}, "node": {}},
         "progress_hooks": [progress_hook],
         "ignoreerrors": True,
         "match_filter": match_filter,
@@ -172,8 +176,11 @@ def download_query(
         "sleep_interval": 3,
         "max_sleep_interval": 8,
         "sleep_interval_requests": 1,
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
     }
+    if cookies_from_browser is not None:
+        ydl_opts["cookiesfrombrowser"] = (cookies_from_browser,)
+    elif cookies is not None:
+        ydl_opts["cookiefile"] = str(cookies.expanduser())
 
     new_ids: list[str] = []
     try:
@@ -227,6 +234,13 @@ def main() -> None:
     ap.add_argument("--per-query", type=positive_int, default=RESULTS_PER_QUERY)
     ap.add_argument("--min-duration", type=positive_int, default=MIN_DURATION)
     ap.add_argument("--max-duration", type=positive_int, default=MAX_DURATION)
+    authentication = ap.add_mutually_exclusive_group()
+    authentication.add_argument(
+        "--cookies-from-browser",
+        choices=COOKIE_BROWSERS,
+        help="Use the selected browser's signed-in session for downloads",
+    )
+    authentication.add_argument("--cookies", type=Path, help="Read a Netscape-format cookie file for downloads")
     args = ap.parse_args()
     if args.min_duration > args.max_duration:
         ap.error("--min-duration must not exceed --max-duration")
@@ -250,6 +264,23 @@ def main() -> None:
                 print(f"  [{cat}] {query}")
         print(f"  Output: {args.out.resolve()}")
         return
+
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        ap.error('python-dotenv not installed. Run: python -m pip install "yt-dlp[default]" python-dotenv')
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
+    if args.cookies_from_browser is None and args.cookies is None:
+        browser = os.environ.get("YOUTUBE_COOKIES_FROM_BROWSER", "").strip()
+        cookie_file = os.environ.get("YOUTUBE_COOKIES_FILE", "").strip()
+        if browser and cookie_file:
+            ap.error("Set only one of YOUTUBE_COOKIES_FROM_BROWSER and YOUTUBE_COOKIES_FILE")
+        args.cookies_from_browser = browser or None
+        args.cookies = Path(cookie_file) if cookie_file else None
+    if args.cookies_from_browser is not None and args.cookies_from_browser not in COOKIE_BROWSERS:
+        ap.error("YOUTUBE_COOKIES_FROM_BROWSER must name a supported browser; see --help")
+    if args.cookies is not None and not args.cookies.expanduser().is_file():
+        ap.error("--cookies must name an existing cookie file")
 
     args.out.mkdir(parents=True, exist_ok=True)
     cp = {} if args.reset else load_checkpoint(args.out)
@@ -283,6 +314,7 @@ def main() -> None:
             new_ids = download_query(
                 query, cat_dir, downloaded_ids, per_cat_remaining=remaining,
                 per_query=args.per_query, min_duration=args.min_duration, max_duration=args.max_duration,
+                cookies_from_browser=args.cookies_from_browser, cookies=args.cookies,
             )
             added = 0
             for vid_id in new_ids:
