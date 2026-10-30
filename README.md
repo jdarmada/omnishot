@@ -244,6 +244,40 @@ python scripts/download_youtube.py --out ./clips --total 20
 python scripts/download_youtube.py --out ~/Movies/B-roll --categories nature animals
 ```
 
+#### Custom YouTube themes
+
+A theme is a nonempty JSON object mapping category names (letters, numbers,
+underscores or hyphens) to nonempty lists of search queries. Copy
+`themes/snow.json` to prepare another theme without editing Python.
+Without `--theme`, the original categories remain available.
+
+Preview all selected queries without installing dependencies, downloading videos
+or changing files:
+
+```bash
+python3 scripts/download_youtube.py --theme themes/snow.json --out ./clips/snow --total 12 --dry-run
+```
+
+Install `yt-dlp` for actual downloads (`python3 -m pip install yt-dlp`), then run:
+
+```bash
+python3 scripts/download_youtube.py --theme themes/snow.json --out ./clips/snow --total 12 \
+  --min-duration 10 --max-duration 600
+```
+
+Select individual categories with `--categories ski snowboard`. Durations are in
+seconds; defaults remain 120–1200. `--total` includes IDs already recorded in the
+output folder's checkpoint. Remaining downloads are divided across categories;
+`--per-category` optionally sets an explicit cap. The target may not be reached
+if searches return duplicates, unavailable videos or too few eligible results.
+Failed searches with no completed downloads can be retried on the next run.
+
+No YouTube API key, Pexels key or Jina key is needed to download videos.
+YouTube access and `yt-dlp` are required; search results can change over time.
+When the app watches `./clips`, videos in `./clips/snow` are indexed recursively
+alongside other clips. Indexing and text search still require the app's Jina key
+and Elasticsearch connection.
+
 Both scripts checkpoint progress so interrupted runs resume cleanly. If yt-dlp hits 403s: `pip install -U yt-dlp`.
 
 ---

@@ -1,7 +1,7 @@
 """
 Download longer b-roll clips from YouTube via yt-dlp.
 
-Lightweight version: 6 categories, fewer queries. Checkpointing resumes
+Use the built-in categories or a JSON theme. Checkpointing resumes
 interrupted runs. No API key required.
 
 Usage:
@@ -13,14 +13,10 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 import sys
 import time
 from pathlib import Path
-
-from dotenv import load_dotenv
-
-ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT / ".env")
 
 SEARCH_TERMS: dict[str, list[str]] = {
     "animals": [
@@ -81,17 +77,30 @@ def save_checkpoint(out: Path, cp: dict) -> None:
     (out / ".yt_checkpoint.json").write_text(json.dumps(cp))
 
 
-def _duration_filter(info: dict, *, incomplete: bool = False) -> str | None:
+def _duration_filter(
+    info: dict, *, incomplete: bool = False,
+    min_duration: int = MIN_DURATION, max_duration: int = MAX_DURATION,
+) -> str | None:
     duration = info.get("duration") or 0
     if info.get("is_live") or info.get("was_live"):
         return "Live content"
     if not duration:
         return None if incomplete else "Unknown duration"
-    if duration < MIN_DURATION:
-        return f"Too short ({duration}s < {MIN_DURATION}s)"
-    if duration > MAX_DURATION:
-        return f"Too long ({duration}s > {MAX_DURATION}s)"
+    if duration < min_duration:
+        return f"Too short ({duration}s < {min_duration}s)"
+    if duration > max_duration:
+        return f"Too long ({duration}s > {max_duration}s)"
     return None
+
+
+def _media_exists(cat_dir: Path, vid_id: str) -> bool:
+    """Count completed media files, excluding partial downloads and sidecars."""
+    return any(
+        path.is_file() and path.stem == vid_id
+        and path.suffix.lower() in {".mp4", ".webm", ".mkv", ".mov"}
+        and path.stat().st_size > 0
+        for path in cat_dir.iterdir()
+    ) if cat_dir.exists() else False
 
 
 def download_query(
@@ -100,15 +109,49 @@ def download_query(
     downloaded_ids: set[str],
     per_cat_remaining: int,
     dry_run: bool = False,
+    *,
+    per_query: int = RESULTS_PER_QUERY,
+    min_duration: int = MIN_DURATION,
+    max_duration: int = MAX_DURATION,
 ) -> list[str]:
+    n = min(per_query, per_cat_remaining)
+    if n <= 0:
+        return []
+    search_url = f"ytsearch{n}:{query}"
+    if dry_run:
+        print(f"      [dry-run] would search: {search_url!r}")
+        return []
     try:
         import yt_dlp
     except ImportError:
         sys.exit("yt-dlp not installed. Run: pip install yt-dlp")
 
-    new_ids: list[str] = []
-    n = min(RESULTS_PER_QUERY, per_cat_remaining)
-    search_url = f"ytsearch{n}:{query}"
+    reserved: set[str] = set()
+    completed: set[str] = set()
+
+    def match_filter(info: dict, *, incomplete: bool = False) -> str | None:
+        reason = _duration_filter(
+            info, incomplete=incomplete, min_duration=min_duration, max_duration=max_duration,
+        )
+        if reason:
+            return reason
+        vid_id = info.get("id")
+        if vid_id in downloaded_ids or vid_id in completed:
+            return "Already downloaded"
+        if not incomplete and vid_id:
+            # yt-dlp can validate the same entry more than once before downloading.
+            if vid_id not in reserved:
+                if len(reserved) >= n:
+                    return "Download quota reached"
+                reserved.add(vid_id)
+        return None
+
+    def progress_hook(data: dict) -> None:
+        _progress_hook(data)
+        if data["status"] == "finished":
+            vid_id = data.get("info_dict", {}).get("id")
+            if vid_id in reserved:
+                completed.add(vid_id)
 
     ydl_opts: dict = {
         "format": (
@@ -119,9 +162,9 @@ def download_query(
         "outtmpl": str(cat_dir / "%(id)s.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
-        "progress_hooks": [_progress_hook],
+        "progress_hooks": [progress_hook],
         "ignoreerrors": True,
-        "match_filter": _duration_filter,
+        "match_filter": match_filter,
         "noplaylist": True,
         "socket_timeout": 30,
         "retries": 3,
@@ -132,10 +175,7 @@ def download_query(
         "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
     }
 
-    if dry_run:
-        print(f"      [dry-run] would search: {search_url!r}")
-        return []
-
+    new_ids: list[str] = []
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(search_url, download=True)
@@ -145,82 +185,122 @@ def download_query(
                 if not entry:
                     continue
                 vid_id = entry.get("id", "")
-                if vid_id and vid_id not in downloaded_ids:
-                    if list(cat_dir.glob(f"{vid_id}.*")):
-                        new_ids.append(vid_id)
+                if (vid_id in reserved and vid_id not in downloaded_ids
+                        and vid_id not in new_ids and _media_exists(cat_dir, vid_id)):
+                    new_ids.append(vid_id)
     except Exception as exc:
         print(f"      ⚠ yt-dlp error for {query!r}: {exc}")
-
     return new_ids
 
 
+def positive_int(value: str) -> int:
+    """Parse a strictly positive command-line integer."""
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
+
+
+def load_theme(path: Path) -> dict[str, list[str]]:
+    """Read and validate categories and queries from a JSON theme."""
+    theme = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(theme, dict) or not theme:
+        raise ValueError("theme must be a nonempty JSON object")
+    for category, queries in theme.items():
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", category):
+            raise ValueError(f"invalid category name: {category!r}")
+        if (not isinstance(queries, list) or not queries
+                or any(not isinstance(query, str) or not query.strip() for query in queries)):
+            raise ValueError(f"category {category!r} must contain nonempty query strings")
+    return theme
+
+
 def main() -> None:
-    global RESULTS_PER_QUERY
     ap = argparse.ArgumentParser(description="Download YouTube b-roll clips")
     ap.add_argument("--out", type=Path, default=Path("./clips"))
-    ap.add_argument("--total", type=int, default=20)
-    ap.add_argument("--per-category", type=int, default=None)
+    ap.add_argument("--theme", type=Path, help="JSON mapping categories to search query lists")
+    ap.add_argument("--total", type=positive_int, default=20)
+    ap.add_argument("--per-category", type=positive_int, default=None)
     ap.add_argument("--categories", nargs="*", default=None)
-    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--dry-run", action="store_true", help="Preview all queries without network or writes")
     ap.add_argument("--reset", action="store_true")
-    ap.add_argument("--per-query", type=int, default=RESULTS_PER_QUERY)
+    ap.add_argument("--per-query", type=positive_int, default=RESULTS_PER_QUERY)
+    ap.add_argument("--min-duration", type=positive_int, default=MIN_DURATION)
+    ap.add_argument("--max-duration", type=positive_int, default=MAX_DURATION)
     args = ap.parse_args()
-
-    RESULTS_PER_QUERY = args.per_query
-    categories = args.categories or list(SEARCH_TERMS)
-    unknown = set(categories) - set(SEARCH_TERMS)
+    if args.min_duration > args.max_duration:
+        ap.error("--min-duration must not exceed --max-duration")
+    try:
+        terms = load_theme(args.theme) if args.theme else SEARCH_TERMS
+    except (OSError, ValueError) as exc:
+        ap.error(f"Cannot load theme: {exc}")
+    categories = list(dict.fromkeys(args.categories or terms))
+    unknown = set(categories) - set(terms)
     if unknown:
-        sys.exit(f"Unknown categories: {unknown}. Valid: {sorted(SEARCH_TERMS)}")
+        ap.error(f"Unknown categories: {sorted(unknown)}. Valid: {sorted(terms)}")
+
+    print(f"Categories : {', '.join(categories)}")
+    print(f"Target     : {args.total} videos ({args.min_duration}–{args.max_duration}s)")
+    print(f"Per query  : {args.per_query} results")
+    if args.per_category:
+        print(f"Per category: {args.per_category} videos maximum")
+    if args.dry_run:
+        for cat in categories:
+            for query in terms[cat]:
+                print(f"  [{cat}] {query}")
+        print(f"  Output: {args.out.resolve()}")
+        return
 
     args.out.mkdir(parents=True, exist_ok=True)
     cp = {} if args.reset else load_checkpoint(args.out)
     done_keys: set[str] = set(cp.get("done", []))
     downloaded_ids: set[str] = set(cp.get("downloaded_ids", []))
-    per_cat_cap = args.per_category or max(1, args.total // len(categories))
-
-    print(f"Categories : {', '.join(categories)}")
-    print(f"Target     : {args.total} videos ({MIN_DURATION}–{MAX_DURATION}s)")
+    existing = {
+        cat: sum(_media_exists(args.out / cat, vid_id) for vid_id in downloaded_ids)
+        for cat in categories
+    }
+    remaining_total = max(0, args.total - len(downloaded_ids))
+    base, extra = divmod(remaining_total, len(categories))
+    caps = {
+        cat: args.per_category if args.per_category is not None else existing[cat] + base + (i < extra)
+        for i, cat in enumerate(categories)
+    }
 
     new_total = 0
     for cat in categories:
-        cat_dir = args.out / cat
-        cat_dir.mkdir(exist_ok=True)
-        cat_downloaded = sum(
-            1
-            for vid_id in downloaded_ids
-            if any((cat_dir).glob(f"{vid_id}.*"))
-        )
-        print(f"[{cat}]  {cat_downloaded}/{per_cat_cap} on disk")
-
-        for qi, query in enumerate(SEARCH_TERMS[cat]):
-            if len(downloaded_ids) >= args.total or cat_downloaded >= per_cat_cap:
+        cat_downloaded = existing[cat]
+        print(f"[{cat}]  {cat_downloaded}/{caps[cat]} on disk")
+        for qi, query in enumerate(terms[cat]):
+            remaining = min(caps[cat] - cat_downloaded, args.total - len(downloaded_ids))
+            if remaining <= 0:
                 break
-            key = f"{cat}|{qi}|{query}|n{RESULTS_PER_QUERY}"
+            key = f"{cat}|{qi}|{query}|n{args.per_query}|{args.min_duration}-{args.max_duration}"
             if key in done_keys:
                 continue
-
-            remaining = per_cat_cap - cat_downloaded
+            cat_dir = args.out / cat
+            cat_dir.mkdir(exist_ok=True)
             print(f"  → {query!r}")
             new_ids = download_query(
-                query,
-                cat_dir,
-                downloaded_ids,
-                per_cat_remaining=remaining,
-                dry_run=args.dry_run,
+                query, cat_dir, downloaded_ids, per_cat_remaining=remaining,
+                per_query=args.per_query, min_duration=args.min_duration, max_duration=args.max_duration,
             )
+            added = 0
             for vid_id in new_ids:
+                if vid_id in downloaded_ids or added >= remaining:
+                    continue
                 downloaded_ids.add(vid_id)
                 cat_downloaded += 1
                 new_total += 1
+                added += 1
                 print(f"    ✓ {vid_id}")
-
-            done_keys.add(key)
-            if not args.dry_run:
+            if added:
+                done_keys.add(key)
                 save_checkpoint(
                     args.out,
-                    {"done": list(done_keys), "downloaded_ids": list(downloaded_ids)},
+                    {"done": sorted(done_keys), "downloaded_ids": sorted(downloaded_ids)},
                 )
-            if not args.dry_run and qi < len(SEARCH_TERMS[cat]) - 1:
+            if (qi < len(terms[cat]) - 1 and cat_downloaded < caps[cat]
+                    and len(downloaded_ids) < args.total):
                 time.sleep(5.0 + random.uniform(0, 5))
 
     print(f"✓ Downloaded {new_total} new videos ({len(downloaded_ids)} total)")
