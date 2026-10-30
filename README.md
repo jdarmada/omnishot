@@ -244,7 +244,99 @@ python scripts/download_youtube.py --out ./clips --total 20
 python scripts/download_youtube.py --out ~/Movies/B-roll --categories nature animals
 ```
 
-Both scripts checkpoint progress so interrupted runs resume cleanly. If yt-dlp hits 403s: `pip install -U yt-dlp`.
+#### Custom YouTube themes
+
+A theme is a nonempty JSON object mapping category names (letters, numbers,
+underscores or hyphens) to nonempty lists of search queries. Copy
+`themes/snow.json` to prepare another theme without editing Python.
+Without `--theme`, the original categories remain available.
+
+Preview all selected queries without installing dependencies, downloading videos
+or changing files:
+
+```bash
+python3 scripts/download_youtube.py --theme themes/snow.json --out ./clips/snow --total 12 --dry-run
+```
+
+Install the download dependencies (`python3 -m pip install 'yt-dlp[default]' python-dotenv`).
+YouTube challenge solving also needs Node.js 22+ or Deno 2.3+ on `PATH`;
+the downloader enables both runtimes and lets yt-dlp choose an available one.
+Then run:
+
+```bash
+python3 scripts/download_youtube.py --theme themes/snow.json --out ./clips/snow --total 12 \
+  --min-duration 10 --max-duration 600
+```
+
+Select individual categories with `--categories ski snowboard`. Durations are in
+seconds; defaults remain 120–1200. `--total` includes IDs already recorded in the
+output folder's checkpoint. Remaining downloads are divided across categories;
+`--per-category` optionally sets an explicit cap. The target may not be reached
+if searches return duplicates, unavailable videos or too few eligible results.
+Failed searches with no completed downloads can be retried on the next run.
+
+No YouTube API key, Pexels key or Jina key is needed to download videos.
+YouTube access and `yt-dlp` are required; search results can change over time.
+When the app watches `./clips`, videos in `./clips/snow` are indexed recursively
+alongside other clips. Indexing and text search still require the app's Jina key
+and Elasticsearch connection.
+
+#### Optional YouTube authentication
+
+If YouTube requests sign-in, opt in to using a browser where you are already
+signed in to YouTube. For a small first download with Chrome:
+
+```bash
+python scripts/download_youtube.py --theme themes/snow.json \
+  --categories bronzes-nathalie --out ./clips/bronzes --total 1 \
+  --min-duration 5 --max-duration 600 --cookies-from-browser chrome
+```
+
+Replace `chrome` with `firefox` for Firefox. Only simple browser names are
+accepted; see `--help` for the supported list. On macOS, the browser's cookie
+decryption may prompt for Keychain access.
+
+To save this choice in `.env`, configure only one of these alternatives:
+
+```dotenv
+YOUTUBE_COOKIES_FROM_BROWSER=chrome
+YOUTUBE_COOKIES_FILE=
+```
+
+Alternatively, use an existing Netscape-format cookie file outside the repository:
+
+```dotenv
+YOUTUBE_COOKIES_FROM_BROWSER=
+YOUTUBE_COOKIES_FILE=/path/outside/repo/youtube-cookies.txt
+```
+
+The file alternative is also available as
+`--cookies /path/outside/repo/youtube-cookies.txt`. Cookie files contain session
+credentials: keep them outside the repository and do not share them. Explicit
+CLI authentication overrides both `.env` settings; existing environment variables
+take precedence over `.env`. No browser session is read unless authentication is
+configured, and `--dry-run` does not load `.env` or access cookies. The downloader
+lets yt-dlp choose its default YouTube clients for both anonymous and authenticated
+downloads.
+
+See the [yt-dlp cookie documentation](https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp)
+for details. Authentication does not guarantee that YouTube will accept a request.
+
+Both scripts checkpoint progress so interrupted runs resume cleanly. If yt-dlp
+hits 403s, update the downloader and its challenge-solving components:
+
+```bash
+python -m pip install -U 'yt-dlp[default]' python-dotenv
+```
+
+If YouTube reports `Requested format is not available`, inspect the preceding
+warnings. A message such as `n challenge solving failed` and a list containing
+only storyboard images can indicate missing challenge-solving components or a
+JavaScript runtime. Install the default extras with the command above and ensure
+Node.js 22+ or Deno 2.3+ is on `PATH`. The downloader keeps its 720p limit; changing
+the format selector does not fix a failed challenge solver. See the
+[yt-dlp EJS documentation](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
+This setup does not resolve a separate authentication request by itself.
 
 ---
 
